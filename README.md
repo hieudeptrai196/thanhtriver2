@@ -6,6 +6,9 @@ tòa thành biết đi: ban ngày khai thác, xây và lên đường, ban đêm
 Viết bằng Vite, TypeScript (strict) và Three.js. Mô hình 3D dùng bộ KayKit (CC0, xem phần ghi công), phần còn lại
 dựng bằng code; âm thanh tổng hợp bằng WebAudio; không có server.
 
+> Người mới vào dự án: đọc **[docs/TONG_QUAN.md](docs/TONG_QUAN.md)** trước. Tài liệu đó tóm tắt ý tưởng cốt lõi, lối chơi, các
+> hệ thống, những gì demo đã có hoặc còn thiếu, và cách code được tổ chức.
+
 ## Chạy
 
 ```bash
