@@ -1,0 +1,15 @@
+{
+  "name": "Thành Trì",
+  "short_name": "Thành Trì",
+  "description": "RTS sinh tồn chống quái: tòa thành biết đi, ngày phát triển, đêm sống sót.",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#1a1f2e",
+  "theme_color": "#1a1f2e",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
