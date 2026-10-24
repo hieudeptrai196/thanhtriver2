@@ -13,6 +13,10 @@ export const en = {
   'menu.noScores': 'No scores yet.',
   'menu.scoreRow': 'Night {nights} · {kills} kills · {score} pts',
   'menu.rotate': 'Please rotate your device to landscape',
+  'menu.credits': 'Credits',
+  'credits.models': '3D models: KayKit by Kay Lousberg (www.kaylousberg.com), CC0 – Adventurers Character Pack, Skeletons Character Pack, Medieval Hexagon Pack.',
+  'credits.code': 'Torches, bushes, effects, interface and sounds made for this game. Built with three.js and Vite.',
+  'credits.thanks': 'Thank you, Kay!',
   'menu.seed': 'Seed {seed}',
 
   'help.1': 'You command a village living around one walking castle. You have no hero: give orders to groups.',
@@ -159,6 +163,7 @@ export const en = {
   'dawn.ahead': '{n} stop ahead',
   'dawn.aheadMany': '{n} stops ahead',
   'dawn.resLeft': 'Resources left: {pct}%',
+  'dawn.exhausted': 'This land is exhausted – move on!',
   'dawn.resFull': 'Resources: full',
   'dawn.main': 'Main: {res}',
   'dawn.dirs': 'Attack directions: {n}',

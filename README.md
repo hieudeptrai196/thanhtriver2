@@ -3,8 +3,8 @@
 Bản demo chơi được của một game RTS sinh tồn chống quái trên trình duyệt. Bạn chỉ huy một ngôi làng sống quanh một
 tòa thành biết đi: ban ngày khai thác, xây và lên đường, ban đêm cố thủ. Chơi vô tận, điểm chính là số đêm sống sót.
 
-Viết bằng Vite, TypeScript (strict) và Three.js. Mọi hình dựng bằng code, âm thanh tổng hợp bằng WebAudio, không có
-file model hay server.
+Viết bằng Vite, TypeScript (strict) và Three.js. Mô hình 3D dùng bộ KayKit (CC0, xem phần ghi công), phần còn lại
+dựng bằng code; âm thanh tổng hợp bằng WebAudio; không có server.
 
 ## Chạy
 
@@ -53,6 +53,19 @@ Tham số URL:
 đuốc và tháp, dùng kỹ năng, chọn thẻ và chọn đường lúc bình minh (đợi khoảng 2,5 giây để bạn kịp đọc). Bấm lại để tự
 điều khiển. Có thể kết hợp với `?speed=4` để xem nhanh.
 
+## Đồ hoạ và ghi công
+
+Mô hình 3D lấy từ **KayKit** của **Kay Lousberg** ([www.kaylousberg.com](https://www.kaylousberg.com)), giấy phép
+**CC0**: Adventurers Character Pack, Skeletons Character Pack và Medieval Hexagon Pack. Chi tiết từng file, nguồn và
+cách dùng nằm trong [CREDITS.md](CREDITS.md); trong game xem ở menu **Ghi công**.
+
+- `public/models/*.glb` là bản đã cắt gọn (khoảng 3,3MB). Muốn dựng lại từ file gốc, tải các file liệt kê trong
+  CREDITS.md vào một thư mục (model Medieval để trong thư mục con `med/`), rồi chạy
+  `node scripts/build-models.mjs <thư mục>`.
+- Lúc chạy, vài khung của các hoạt ảnh đứng, đi/chạy và đánh được "nướng" thành mesh tĩnh để vẽ hàng loạt bằng
+  InstancedMesh. Nhờ vậy 30 quân và 80 quái vẫn nhẹ.
+- Nếu model chưa tải xong (hoặc tải lỗi), game dùng tạm hình dựng bằng code.
+
 ## Kiến trúc
 
 ```
@@ -89,6 +102,8 @@ src/
 - **Bánh xe** mất một phần nhỏ sát thương cận chiến vào thành; thợ tự sửa khi rảnh.
 - **Người lạ xin gia nhập** tự động nhận (1 nông dân + 1 lính giáo) nếu còn chỗ, kèm thông báo.
 - **Cháy mái** có thể xảy ra từ đêm 2; lõi mất máu tới khi thợ dập xong.
+- **Đất kiệt:** ở một chỗ quá 2 đêm thì tài nguyên quanh đó ngừng hồi; thẻ "Ở lại" báo "Vùng này đã kiệt" khi đã
+  kiệt hoặc còn dưới 25%. Đứng yên mãi thì khoảng đêm 6–7 là hết sạch, buộc phải đi tiếp.
 - **Quái lẻ ban ngày** có từ ngày thứ 2. Ban ngày, lính giáo rảnh tự đuổi quái trong bán kính 18 quanh thành.
 - **Hết đêm:** quái còn sống bỏ chạy lúc bình minh.
 - **Nông dân rảnh** ưu tiên loại tài nguyên đang ít trong kho.

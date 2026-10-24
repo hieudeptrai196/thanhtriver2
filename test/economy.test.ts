@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { BALANCE } from '../src/data/balance';
 import { Sim } from '../src/sim/sim';
 import { runSeconds } from './helpers';
 
@@ -28,6 +29,23 @@ describe('economy', () => {
     runSeconds(sim, 40);
     expect(s.nodes[0].amount).toBe(0);
     expect(s.units.filter((u) => u.type === 'peasant').every((u) => u.targetId !== 9999 || u.job !== 'gather')).toBe(true);
+  });
+
+  it('the land stops regrowing after a long camp', () => {
+    const sim = Sim.create(5);
+    const s = sim.state;
+    const node = s.nodes[0];
+    node.amount = 10;
+    s.units = []; // nobody gathers
+    s.castle.nightsHere = BALANCE.world.regrowMaxNightsHere; // the next dawn makes it one more
+    s.castle.lastNightX = s.castle.x;
+    s.night = 2;
+    s.phase = 'night';
+    s.phaseTime = s.phaseLength;
+    sim.step();
+    expect(s.phase).toBe('dawn');
+    expect(node.amount).toBe(10);
+    expect(s.routes[0].exhausted).toBe(true);
   });
 
   it('flagged peasants gather near the flag', () => {

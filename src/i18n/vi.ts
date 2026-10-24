@@ -13,6 +13,10 @@ export const vi: Record<MessageKey, string> = {
   'menu.noScores': 'Chưa có điểm nào.',
   'menu.scoreRow': 'Đêm {nights} · {kills} quái · {score} điểm',
   'menu.rotate': 'Hãy xoay ngang điện thoại',
+  'menu.credits': 'Ghi công',
+  'credits.models': 'Mô hình 3D: KayKit của Kay Lousberg (www.kaylousberg.com), giấy phép CC0 – Adventurers Character Pack, Skeletons Character Pack, Medieval Hexagon Pack.',
+  'credits.code': 'Đuốc, bụi quả, hiệu ứng, giao diện và âm thanh được làm riêng cho game. Xây dựng bằng three.js và Vite.',
+  'credits.thanks': 'Cảm ơn Kay!',
   'menu.seed': 'Seed {seed}',
 
   'help.1': 'Bạn chỉ huy một ngôi làng sống quanh một tòa thành biết đi. Không có nhân vật riêng: bạn ra lệnh cho các nhóm quân.',
@@ -159,6 +163,7 @@ export const vi: Record<MessageKey, string> = {
   'dawn.ahead': 'Điểm dừng thứ {n}',
   'dawn.aheadMany': 'Điểm dừng thứ {n}',
   'dawn.resLeft': 'Tài nguyên còn: {pct}%',
+  'dawn.exhausted': 'Vùng này đã kiệt – nên đi tiếp!',
   'dawn.resFull': 'Tài nguyên: đầy',
   'dawn.main': 'Chính: {res}',
   'dawn.dirs': 'Số hướng quái: {n}',

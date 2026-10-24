@@ -17,6 +17,8 @@ const speed = Math.max(1, Math.min(16, Number(params.get('speed') ?? 1) || 1));
 const app = document.getElementById('app')!;
 const canvas = document.getElementById('scene') as HTMLCanvasElement;
 const renderer = new GameRenderer(canvas);
+renderer.loadModels();
+if (import.meta.env.DEV) (window as unknown as { renderer: GameRenderer }).renderer = renderer;
 const audio = new Audio();
 
 document.title = t('app.title');
@@ -155,7 +157,7 @@ function startGame(sim: Sim): void {
 // Buttons must not keep focus, or Space would also "click" the last pressed button.
 document.addEventListener('click', (e) => (e.target as HTMLElement | null)?.closest('button')?.blur(), true);
 
-function showMenu(view: 'main' | 'scores' | 'help' = 'main'): void {
+function showMenu(view: 'main' | 'scores' | 'help' | 'credits' = 'main'): void {
   menuEl?.remove();
   menuEl = el('div', 'menu');
   const box = el('div', 'menu-box');
@@ -185,6 +187,7 @@ function showMenu(view: 'main' | 'scores' | 'help' = 'main'): void {
     btn(t('menu.new'), () => startGame(Sim.create(newSeed())), save ? 'btn' : 'btn big');
     btn(t('menu.scores'), () => showMenu('scores'), 'btn');
     btn(t('menu.help'), () => showMenu('help'), 'btn');
+    btn(t('menu.credits'), () => showMenu('credits'), 'btn');
     const lang = el('div', 'lang');
     lang.append(el('span', '', t('menu.language')));
     for (const l of ['vi', 'en'] as const) {
@@ -204,9 +207,13 @@ function showMenu(view: 'main' | 'scores' | 'help' = 'main'): void {
     if (rows.length === 0) box.append(el('p', '', t('menu.noScores')));
     for (const r of rows) list.append(el('li', '', t('menu.scoreRow', { nights: r.nights, kills: r.kills, score: r.score })));
     box.append(list);
-  } else {
+  } else if (view === 'help') {
     const list = el('div', 'help');
     for (let i = 1; i <= 7; i++) list.append(el('p', '', t(`help.${i}`)));
+    box.append(list);
+  } else {
+    const list = el('div', 'help');
+    list.append(el('p', '', t('credits.models')), el('p', '', t('credits.code')), el('p', '', t('credits.thanks')));
     box.append(list);
   }
   if (view !== 'main') {

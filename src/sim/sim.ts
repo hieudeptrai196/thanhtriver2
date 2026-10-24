@@ -716,8 +716,10 @@ export class Sim {
       s.units = s.units.filter((u) => u.hp > 0);
       st.lost += before - s.units.length;
     }
-    // A little regrowth.
-    for (const n of s.nodes) n.amount = Math.min(n.max, n.amount + Math.floor(n.max * BALANCE.world.regrowPerDawn));
+    // A little regrowth, until the land around a long camp is exhausted.
+    if (s.castle.nightsHere <= BALANCE.world.regrowMaxNightsHere) {
+      for (const n of s.nodes) n.amount = Math.min(n.max, n.amount + Math.floor(n.max * BALANCE.world.regrowPerDawn));
+    }
     // Card offer.
     const pool = CARD_IDS.filter((c) => c !== 'extraSlot' || slotCount(s) < C.maxSlots);
     s.cards = shuffle(s, [...pool]).slice(0, 3);
@@ -747,6 +749,7 @@ export class Sim {
       danger: this.dangerLevel(here, stayDirs),
       resourcePct: resourcePct(s, s.castle.x),
       travel: 0,
+      exhausted: s.castle.nightsHere >= BALANCE.world.regrowMaxNightsHere || resourcePct(s, s.castle.x) < BALANCE.world.exhaustedPct,
     });
     for (let i = 1; i <= BALANCE.route.aheadChoices; i++) {
       const chunk = here + i;
@@ -760,6 +763,7 @@ export class Sim {
         dirs,
         danger: this.dangerLevel(chunk, dirs),
         resourcePct: 1,
+        exhausted: false,
         travel: Math.round(Math.abs(chunkCenter(chunk) - s.castle.x) / speed),
       });
     }

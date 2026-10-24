@@ -103,6 +103,7 @@ export interface RouteOption {
   danger: number; // 1..5
   resourcePct: number; // only for stay
   travel: number; // seconds of daylight needed
+  exhausted: boolean; // only for stay: the land no longer regrows or is nearly empty
 }
 
 export interface Mods {

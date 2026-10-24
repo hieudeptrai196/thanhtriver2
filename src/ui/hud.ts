@@ -509,6 +509,7 @@ export class Hud {
         b.append(el('b', '', r.id === 0 ? `🏰 ${t('dawn.stay')}` : `➡ ${t(r.id === 1 ? 'dawn.ahead' : 'dawn.aheadMany', { n: r.id })}`));
         b.append(el('div', 'terrain', `${t(`terrain.${r.terrain}` as MessageKey)} — ${t(`terrain.desc.${r.terrain}` as MessageKey)}`));
         b.append(el('div', '', r.id === 0 ? t('dawn.resLeft', { pct: Math.round(r.resourcePct * 100) }) : t('dawn.resFull')));
+        if (r.exhausted) b.append(el('div', 'bad', `⚠ ${t('dawn.exhausted')}`));
         b.append(el('div', '', t('dawn.main', { res: r.mainRes })));
         b.append(el('div', r.id === 0 ? 'bad' : '', t('dawn.dirs', { n: r.dirs })));
         const danger = el('div', 'danger', `${t('dawn.danger')} ${'●'.repeat(r.danger)}${'○'.repeat(5 - r.danger)}`);

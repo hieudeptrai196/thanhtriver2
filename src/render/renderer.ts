@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { BALANCE, UNIT_TYPES, type MonsterType, type NodeType, type StructType, type UnitType } from '../data/balance';
 import { isLit, lights, type Sim } from '../sim/sim';
 import type { GameEvent, Vec } from '../sim/types';
-import { chunkCenter, chunkTerrain } from '../sim/world';
+import { hash01 } from '../sim/rng';
+import { chunkCenter, chunkOf, chunkTerrain } from '../sim/world';
 import {
   castleGeometry,
   cliffGeometry,
@@ -13,6 +14,7 @@ import {
   unitGeometry,
   wheelGeometry,
 } from './geometry';
+import { ACT_FRAMES, loadModels, MOVE_FRAMES, type Baked, type CharModel, type Models } from './models';
 
 export interface Overlay {
   ghost: { type: StructType; pos: Vec; valid: boolean } | null;
@@ -22,6 +24,11 @@ export interface Overlay {
 const TERRAIN_COLOR = { plains: 0x7fae5a, forest: 0x4f7f3e, canyon: 0xa48a68 };
 const NIGHT_TERRAIN = 0.35;
 const MAX_POINT_LIGHTS = 6;
+// Height of the castle deck where archers stand once the KayKit castle is loaded.
+const WALL_WALK_Y = 1.2;
+// Rails sit under the castle's wheels.
+const RAIL_Z = 2.1;
+const RAIL_LEN = 200;
 
 class Instanced {
   mesh: THREE.InstancedMesh;
@@ -33,12 +40,17 @@ class Instanced {
   private up = new THREE.Vector3(0, 1, 0);
   private c = new THREE.Color();
 
-  constructor(geo: THREE.BufferGeometry, mat: THREE.Material, max: number, scene: THREE.Scene) {
+  constructor(geo: THREE.BufferGeometry, mat: THREE.Material | THREE.Material[], max: number, scene: THREE.Scene) {
     this.mesh = new THREE.InstancedMesh(geo, mat, max);
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.frustumCulled = false;
     this.mesh.count = 0;
     scene.add(this.mesh);
+  }
+
+  setModel(b: Baked): void {
+    this.mesh.geometry = b.geo;
+    this.mesh.material = b.materials;
   }
 
   begin(): void {
@@ -62,9 +74,58 @@ class Instanced {
 
   end(): void {
     this.mesh.count = this.n;
+    this.mesh.visible = this.n > 0;
     this.mesh.instanceMatrix.needsUpdate = true;
     if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
   }
+}
+
+type Pose = 'idle' | 'move' | 'act';
+
+/** One unit or monster kind: a single code-built mesh until the KayKit model loads, then one mesh per baked pose. */
+class Crowd {
+  private slots: Instanced[];
+  private animated = false;
+
+  constructor(geo: THREE.BufferGeometry, mat: THREE.Material, private max: number, private scene: THREE.Scene) {
+    this.slots = [new Instanced(geo, mat, max, scene)];
+  }
+
+  get hasModel(): boolean {
+    return this.animated;
+  }
+
+  setModel(m: CharModel): void {
+    this.slots[0].setModel(m.idle);
+    for (const b of [...m.move, ...m.act]) {
+      const inst = new Instanced(b.geo, b.materials, this.max, this.scene);
+      this.slots.push(inst);
+    }
+    this.animated = true;
+  }
+
+  begin(): void {
+    for (const s of this.slots) s.begin();
+  }
+
+  /** `phase` is a running animation clock; each pose cycles through its frames. */
+  add(pose: Pose, phase: number, x: number, y: number, z: number, rot: number, sc: number, color: number): void {
+    let i = 0;
+    if (this.animated && pose === 'move') i = 1 + (Math.floor(phase * MOVE_FRAMES) % MOVE_FRAMES);
+    else if (this.animated && pose === 'act') i = 1 + MOVE_FRAMES + (Math.floor(phase * ACT_FRAMES) % ACT_FRAMES);
+    this.slots[i].add(x, y, z, rot, sc, sc, sc, color);
+  }
+
+  end(): void {
+    for (const s of this.slots) s.end();
+  }
+}
+
+interface Motion {
+  x: number;
+  z: number;
+  rot: number;
+  moving: number; // seconds since it last moved, for a little hysteresis
 }
 
 interface Fx {
@@ -93,17 +154,27 @@ export class GameRenderer {
   private pointLights: THREE.PointLight[] = [];
   private ground: THREE.Mesh[] = [];
   private groundChunk: number[] = [];
-  private road: THREE.Mesh;
+  private railway: THREE.Group;
+  private hexTiles: Instanced | null = null;
+  private hexSand: Instanced | null = null;
+  private hexKey = '';
+  private scenery: Instanced[] = [];
+  private groves: Instanced[] = [];
   private castle: THREE.Group;
   private wheels: THREE.Mesh[] = [];
   private fire: THREE.Mesh;
   private core: THREE.Mesh;
-  private units = {} as Record<UnitType, Instanced>;
-  private monsters = {} as Record<MonsterType, Instanced>;
-  private nodes = {} as Record<NodeType, Instanced>;
+  private units = {} as Record<UnitType, Crowd>;
+  private monsters = {} as Record<MonsterType, Crowd>;
+  private nodes = {} as Record<NodeType, Instanced[]>;
+  private stumps: Instanced;
   private structs = {} as Record<StructType, Instanced>;
+  private castleCode: THREE.Mesh;
+  private flags: THREE.Group;
+  private models: Models | null = null;
+  private motion = new Map<number, Motion>();
   private blueprint: Instanced;
-  private cliffs: Instanced;
+  private cliffs: Instanced[];
   private glows: Instanced;
   private rings: Instanced;
   private puffs: Instanced;
@@ -143,17 +214,19 @@ export class GameRenderer {
     const flat = (opts: THREE.MeshLambertMaterialParameters = {}) => new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, ...opts });
     const mat = flat();
 
-    this.road = new THREE.Mesh(new THREE.PlaneGeometry(400, BALANCE.world.roadHalfWidth * 2), new THREE.MeshLambertMaterial({ color: 0xb09868 }));
-    this.road.rotation.x = -Math.PI / 2;
-    this.road.position.y = 0.02;
-    this.scene.add(this.road);
+    this.railway = this.buildRailway();
+    this.scene.add(this.railway);
 
     this.castle = new THREE.Group();
-    this.castle.add(new THREE.Mesh(castleGeometry(), mat));
+    this.castleCode = new THREE.Mesh(castleGeometry(), mat);
+    this.castle.add(this.castleCode);
+    this.flags = new THREE.Group();
+    this.castle.add(this.flags);
     const wg = wheelGeometry();
-    for (const [x, z] of [[-3.1, -2], [3.1, -2], [-3.1, 2], [3.1, 2]]) {
+    for (const [x, z] of [[-2.2, -RAIL_Z], [0, -RAIL_Z], [2.2, -RAIL_Z], [-2.2, RAIL_Z], [0, RAIL_Z], [2.2, RAIL_Z]]) {
       const w = new THREE.Mesh(wg, mat);
-      w.position.set(x, 0.7, z);
+      w.position.set(x, 1.0, z);
+      if (z < 0) w.rotation.y = Math.PI;
       this.castle.add(w);
       this.wheels.push(w);
     }
@@ -165,14 +238,17 @@ export class GameRenderer {
     this.castle.add(this.fire);
     this.scene.add(this.castle);
 
-    for (const t of UNIT_TYPES) this.units[t] = new Instanced(unitGeometry(t), mat, 96, this.scene);
+    for (const t of UNIT_TYPES) this.units[t] = new Crowd(unitGeometry(t), mat, 96, this.scene);
     for (const t of ['fast', 'brute', 'ranged', 'boss'] as MonsterType[]) {
-      this.monsters[t] = new Instanced(monsterGeometry(t), flat(), t === 'boss' ? 8 : 160, this.scene);
+      this.monsters[t] = new Crowd(monsterGeometry(t), flat(), t === 'boss' ? 8 : 160, this.scene);
     }
-    for (const t of ['tree', 'rock', 'bush'] as NodeType[]) this.nodes[t] = new Instanced(nodeGeometry(t), mat, 800, this.scene);
+    for (const t of ['tree', 'rock', 'bush'] as NodeType[]) this.nodes[t] = [new Instanced(nodeGeometry(t), mat, 800, this.scene)];
+    const stumpGeo = new THREE.CylinderGeometry(0.2, 0.25, 0.3, 6);
+    stumpGeo.translate(0, 0.15, 0);
+    this.stumps = new Instanced(stumpGeo, new THREE.MeshLambertMaterial({ color: 0x806040 }), 800, this.scene);
     for (const t of ['wall', 'tower', 'torch'] as StructType[]) this.structs[t] = new Instanced(structGeometry(t), flat(), 300, this.scene);
     this.blueprint = new Instanced(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0x80c0ff, transparent: true, opacity: 0.35, depthWrite: false }), 300, this.scene);
-    this.cliffs = new Instanced(cliffGeometry(), mat, 600, this.scene);
+    this.cliffs = [new Instanced(cliffGeometry(), mat, 600, this.scene)];
 
     const glowMat = new THREE.MeshBasicMaterial({ map: glowTexture(), color: 0xffc070, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false });
     const glowGeo = new THREE.PlaneGeometry(2, 2);
@@ -213,6 +289,65 @@ export class GameRenderer {
       this.scene.add(m);
       this.fxRings.push(m);
     }
+  }
+
+  private applyModels(m: Models): void {
+    this.models = m;
+    this.units.peasant.setModel(m.chars.peasant);
+    this.units.builder.setModel(m.chars.builder);
+    this.units.spear.setModel(m.chars.spear);
+    this.units.archer.setModel(m.chars.archer);
+    this.monsters.fast.setModel(m.chars.fast);
+    this.monsters.brute.setModel(m.chars.brute);
+    this.monsters.ranged.setModel(m.chars.ranged);
+    this.monsters.boss.setModel(m.chars.brute);
+    const max = 800;
+    this.nodes.tree = [m.props.treeA, m.props.treeB].map((b) => new Instanced(b.geo, b.materials, max, this.scene));
+    this.nodes.rock = [m.props.rockA, m.props.rockB, m.props.rockC].map((b) => new Instanced(b.geo, b.materials, max, this.scene));
+    this.stumps.setModel(m.props.stump);
+    this.structs.wall.setModel(m.props.fence);
+    this.structs.tower.setModel(m.props.tower);
+    this.cliffs = [m.props.mountain, m.props.rockA, m.props.rockC].map((b) => new Instanced(b.geo, b.materials, 600, this.scene));
+    this.hexTiles = new Instanced(m.props.hex.geo, m.props.hex.materials, 4000, this.scene);
+    // Canyon floor: same tile shape without the grass texture, painted sandstone.
+    this.hexSand = new Instanced(m.props.hex.geo, new THREE.MeshLambertMaterial({ color: 0xffffff }), 4000, this.scene);
+    this.scenery = [m.props.hillsA, m.props.hillsB, m.props.peak].map((b) => new Instanced(b.geo, b.materials, 80, this.scene));
+    this.groves = [m.props.groveA, m.props.groveB].map((b) => new Instanced(b.geo, b.materials, 120, this.scene));
+    // The flat chunk planes stay underneath as a fallback far away.
+    for (const g of this.ground) g.position.y = -0.7;
+    this.hexKey = '';
+    // Castle: KayKit keep on the code-built wooden platform with wheels.
+    this.castleCode.visible = false;
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.5, 6.4), new THREE.MeshLambertMaterial({ color: 0x6b4a2a }));
+    deck.position.y = 0.95;
+    const keep = new THREE.Mesh(m.props.castle.geo, m.props.castle.materials);
+    keep.position.y = 1.2;
+    this.castle.add(deck, keep);
+    // Palisade along the deck edge: the castle wall.
+    for (let i = 0; i < 5; i++) {
+      const o = -2.6 + i * 1.3;
+      for (const [x, z, r] of [[o, -3.05, 0], [o, 3.05, 0], [-3.05, o, Math.PI / 2], [3.05, o, Math.PI / 2]]) {
+        if (Math.abs(o) < 0.7 && z === 3.05) continue; // gate gap facing the camera
+        const f = new THREE.Mesh(m.props.fence.geo, m.props.fence.materials);
+        f.position.set(x, 1.2, z);
+        f.rotation.y = r;
+        f.scale.set(1.15, 1.1, 1.15);
+        this.flags.add(f);
+      }
+    }
+    for (const [x, z] of [[-3, -3], [3, -3], [-3, 3], [3, 3]]) {
+      const f = new THREE.Mesh(m.props.flag.geo, m.props.flag.materials);
+      f.position.set(x, 1.2, z);
+      this.flags.add(f);
+    }
+    this.core.position.y = 9.2;
+  }
+
+  /** Starts loading the KayKit models; until then (or if loading fails) the code-built shapes are used. */
+  loadModels(): void {
+    loadModels()
+      .then((m) => this.applyModels(m))
+      .catch((e: unknown) => console.warn('models not loaded, using built-in shapes', e));
   }
 
   resize(w: number, h: number): void {
@@ -311,7 +446,7 @@ export class GameRenderer {
     this.camera.lookAt(t.x, 0, t.z);
     this.sun.position.set(t.x - 20, 40, t.z + 15);
     this.sun.target.position.set(t.x, 0, t.z);
-    this.road.position.x = t.x;
+    this.railway.position.x = Math.round(t.x);
 
     this.updateGround(s.seed, t.x, n);
 
@@ -319,7 +454,7 @@ export class GameRenderer {
     const c = s.castle;
     this.castle.position.set(c.x, 0, c.z);
     const roll = c.moving ? this.time * 2.2 : 0;
-    for (const w of this.wheels) w.rotation.x = roll;
+    for (const w of this.wheels) w.rotation.z = w.position.z < 0 ? roll : -roll;
     this.castle.position.y = c.moving ? Math.abs(Math.sin(this.time * 4)) * 0.08 : 0;
     this.core.rotation.y = this.time;
     const coreRatio = c.coreHp / c.coreMax;
@@ -334,41 +469,61 @@ export class GameRenderer {
     for (const type of UNIT_TYPES) this.units[type].begin();
     this.rings.begin();
     const selType = s.selected >= 0 ? UNIT_TYPES[s.selected] : null;
+    const seen = new Set<number>();
     for (const u of s.units) {
       if (u.inside) continue;
-      const bob = u.job === 'gather' || u.job === 'build' || u.job === 'repair' ? Math.abs(Math.sin(this.time * 8 + u.id)) * 0.1 : 0;
+      seen.add(u.id);
+      const crowd = this.units[u.type];
+      const target = u.targetId >= 0 && u.type !== 'peasant' && u.type !== 'builder' ? s.monsters.find((m) => m.id === u.targetId) : undefined;
+      const mo = this.track(u.id, u.x, u.z, dt, target);
+      const working = u.job === 'gather' || u.job === 'build' || u.job === 'repair' || u.job === 'attack';
+      const pose: Pose = mo.moving < 0.15 ? 'move' : working ? 'act' : 'idle';
       const hurt = u.hp / u.maxHp;
       const col = hurt > 0.5 ? 0xffffff : hurt > 0.25 ? 0xffb0a0 : 0xff6050;
-      this.units[u.type].add(u.x, bob, u.z, u.id, 1.35, 1.35, 1.35, col);
-      if (u.type === selType) this.rings.add(u.x, 0.06, u.z, 0, 1, 1, 1, 0xfff080);
+      const onWall = crowd.hasModel && u.type === 'archer' && Math.abs(u.x - c.x) < 3.2 && Math.abs(u.z - c.z) < 3.2;
+      const bob = crowd.hasModel ? 0 : pose === 'act' ? Math.abs(Math.sin(this.time * 8 + u.id)) * 0.1 : 0;
+      crowd.add(pose, this.time * (pose === 'move' ? 1.1 : 1.4) + u.id * 0.37, u.x, (onWall ? WALL_WALK_Y : 0) + bob, u.z, mo.rot, crowd.hasModel ? 1 : 1.35, col);
+      if (u.type === selType) this.rings.add(u.x, onWall ? WALL_WALK_Y + 0.05 : 0.06, u.z, 0, 1, 1, 1, 0xfff080);
     }
     for (const type of UNIT_TYPES) this.units[type].end();
 
     // Monsters (only in the light at night).
     for (const k of Object.keys(this.monsters) as MonsterType[]) this.monsters[k].begin();
     for (const m of s.monsters) {
+      seen.add(m.id);
+      const mo = this.track(m.id, m.x, m.z, dt);
       if (dark2 && !isLit(s, ls, m.x, m.z)) continue;
-      const rot = Math.atan2(c.x - m.x, c.z - m.z);
+      const crowd = this.monsters[m.type];
       const hurt = m.hp / m.maxHp;
-      const sc = 1.25 * (m.type === 'boss' ? 1 : Math.min(1.6, Math.sqrt(m.maxHp / BALANCE.monsters[m.type].hp / (1 + (s.night - 1) * BALANCE.monsterGrowthPerNight))));
-      const col = hurt > 0.5 ? 0xffffff : 0xff9090;
-      this.monsters[m.type].add(m.x, Math.abs(Math.sin(this.time * 9 + m.id)) * 0.12, m.z, rot, sc, sc, sc, col);
+      // Overflow-buffed monsters look bigger.
+      let sc = Math.min(1.6, Math.sqrt(m.maxHp / BALANCE.monsters[m.type].hp / (1 + (s.night - 1) * BALANCE.monsterGrowthPerNight)));
+      if (m.type === 'boss') sc = crowd.hasModel ? 2.4 : 1.25;
+      else if (!crowd.hasModel) sc *= 1.25;
+      const base = m.type === 'boss' && crowd.hasModel ? 0xff8070 : 0xffffff;
+      const col = hurt > 0.5 ? base : 0xff9090;
+      const pose: Pose = m.slamAt ? 'act' : mo.moving < 0.15 ? 'move' : 'act';
+      const bob = crowd.hasModel ? 0 : Math.abs(Math.sin(this.time * 9 + m.id)) * 0.12;
+      crowd.add(pose, this.time * (m.type === 'fast' ? 1.6 : 1.1) + m.id * 0.29, m.x, bob, m.z, mo.rot, sc, col);
     }
+    for (const id of this.motion.keys()) if (!seen.has(id)) this.motion.delete(id);
     for (const k of Object.keys(this.monsters) as MonsterType[]) this.monsters[k].end();
 
     // Resource nodes shrink as they deplete.
-    for (const k of Object.keys(this.nodes) as NodeType[]) this.nodes[k].begin();
+    for (const k of Object.keys(this.nodes) as NodeType[]) for (const v of this.nodes[k]) v.begin();
+    this.stumps.begin();
     for (const nd of s.nodes) {
       if (Math.abs(nd.x - t.x) > 90) continue;
       const r = nd.amount / nd.max;
       if (r <= 0) {
-        if (nd.type === 'tree') this.nodes.tree.add(nd.x, -1.6, nd.z, nd.id, 0.6, 0.6, 0.6, 0x806040);
+        if (nd.type === 'tree') this.stumps.add(nd.x, 0, nd.z, nd.id, 1, 1, 1, 0xffffff);
         continue;
       }
       const sc = 0.45 + 0.55 * r;
-      this.nodes[nd.type].add(nd.x, 0, nd.z, nd.id * 1.7, sc, sc, sc, 0xffffff);
+      const variants = this.nodes[nd.type];
+      variants[nd.id % variants.length].add(nd.x, 0, nd.z, nd.id * 1.7, sc, sc, sc, 0xffffff);
     }
-    for (const k of Object.keys(this.nodes) as NodeType[]) this.nodes[k].end();
+    for (const k of Object.keys(this.nodes) as NodeType[]) for (const v of this.nodes[k]) v.end();
+    this.stumps.end();
 
     // Structures and blueprints.
     for (const k of Object.keys(this.structs) as StructType[]) this.structs[k].begin();
@@ -384,7 +539,14 @@ export class GameRenderer {
       }
       const hurt = st.hp / st.maxHp;
       const col = st.dismantle ? 0xffe060 : hurt > 0.6 ? 0xffffff : hurt > 0.3 ? 0xffb080 : 0xff6040;
-      this.structs[st.type].add(x, 0, z, 0, 1, 1, 1, col);
+      let rot = 0;
+      if (st.type === 'wall') {
+        // Fences run along neighbouring wall cells.
+        const has = (dx: number, dz: number) => s.structs.some((o) => o.type === 'wall' && o.cx === st.cx + dx && o.cz === st.cz + dz);
+        if ((has(0, 1) || has(0, -1)) && !has(1, 0) && !has(-1, 0)) rot = Math.PI / 2;
+      }
+      const tall = this.models && st.type === 'wall' ? 1.6 : 1;
+      this.structs[st.type].add(x, 0, z, rot, 1, tall, 1, col);
     }
     for (const k of Object.keys(this.structs) as StructType[]) this.structs[k].end();
     this.blueprint.end();
@@ -439,7 +601,10 @@ export class GameRenderer {
         this.groundChunk.push(Number.NaN);
       }
     }
-    this.cliffs.begin();
+    for (const c of this.cliffs) c.begin();
+    for (const v of this.scenery) v.begin();
+    for (const v of this.groves) v.begin();
+    if (this.models) for (const g of this.ground) g.position.y = -0.7;
     for (let i = 0; i < 7; i++) {
       const chunk = first + i;
       const m = this.ground[i];
@@ -451,19 +616,27 @@ export class GameRenderer {
       const col = new THREE.Color(TERRAIN_COLOR[terrain]);
       if (night > 0) col.multiplyScalar(1 - night * (1 - NIGHT_TERRAIN));
       (m.material as THREE.MeshLambertMaterial).color.copy(col);
+      if (this.scenery.length) this.placeScenery(seed, chunk, terrain);
       if (terrain === 'canyon') {
         const cz = BALANCE.world.canyonCliffZ;
         for (let x = 0; x < L; x += 1.6) {
           const wx = chunkCenter(chunk) - L / 2 + x + 0.8;
           for (let row = 0; row < 3; row++) {
             const sc = 1 + row * 0.5 + ((x * 7.3 + row) % 1) * 0.4;
-            this.cliffs.add(wx, 0, -(cz + 0.8 + row * 2.2), x * 3 + row, sc, sc * (1 + row * 0.3), sc);
-            this.cliffs.add(wx, 0, cz + 0.8 + row * 2.2, x * 5 + row, sc, sc * (1 + row * 0.3), sc);
+            const v = this.cliffs[Math.floor(x * 1.7 + row) % this.cliffs.length];
+            const vs = this.models ? 0.7 + row * 0.25 : sc;
+            v.add(wx, 0, -(cz + 0.8 + row * 2.2), x * 3 + row, vs, vs * (1 + row * 0.3), vs);
+            // The camera looks from the south: keep that wall low so it does not hide the camp.
+            const south = this.models ? 0.55 + row * 0.1 : sc;
+            v.add(wx, 0, cz + 0.8 + row * 2.2, x * 5 + row, south, south * 0.8, south);
           }
         }
       }
     }
-    this.cliffs.end();
+    for (const c of this.cliffs) c.end();
+    for (const v of this.scenery) v.end();
+    for (const v of this.groves) v.end();
+    this.updateHexes(seed, cx);
   }
 
   private updateFx(dt: number): void {
@@ -521,6 +694,120 @@ export class GameRenderer {
     g.setDrawRange(0, seg * 2);
     g.getAttribute('position').needsUpdate = true;
     g.getAttribute('color').needsUpdate = true;
+  }
+
+  /** Ballast bed, sleepers and two steel rails. Built once around x = 0 and slid along with the camera. */
+  private buildRailway(): THREE.Group {
+    const g = new THREE.Group();
+    const bed = new THREE.Mesh(new THREE.BoxGeometry(RAIL_LEN, 0.12, RAIL_Z * 2 + 1.6), new THREE.MeshLambertMaterial({ color: 0x8c8274 }));
+    bed.position.y = 0.0;
+    g.add(bed);
+    const n = RAIL_LEN;
+    const sleepers = new THREE.InstancedMesh(new THREE.BoxGeometry(0.5, 0.12, RAIL_Z * 2 + 1.0), new THREE.MeshLambertMaterial({ color: 0x5a3e28 }), n);
+    const m = new THREE.Matrix4();
+    for (let i = 0; i < n; i++) {
+      m.makeTranslation(i - n / 2 + 0.5, 0.1, 0);
+      sleepers.setMatrixAt(i, m);
+    }
+    sleepers.frustumCulled = false;
+    g.add(sleepers);
+    const steel = new THREE.MeshLambertMaterial({ color: 0xb4b8c0 });
+    for (const z of [-RAIL_Z, RAIL_Z]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(RAIL_LEN, 0.14, 0.14), steel);
+      rail.position.set(0, 0.22, z);
+      g.add(rail);
+      const foot = new THREE.Mesh(new THREE.BoxGeometry(RAIL_LEN, 0.04, 0.3), steel);
+      foot.position.set(0, 0.17, z);
+      g.add(foot);
+    }
+    return g;
+  }
+
+  /** Hills and mountains beside the road, and groves in forest chunks. Deterministic per chunk. */
+  private placeScenery(seed: number, chunk: number, terrain: 'plains' | 'forest' | 'canyon'): void {
+    const L = BALANCE.world.chunkLength;
+    const x0 = chunkCenter(chunk) - L / 2;
+    for (let k = 0; k < 6; k++) {
+      const h = (salt: number) => hash01(seed, chunk, k, salt);
+      const side = k % 2 === 0 ? -1 : 1;
+      const z = side * (37 + h(1) * 16);
+      const v = this.scenery[Math.floor(h(2) * this.scenery.length)];
+      const sc = 0.8 + h(3) * 0.6;
+      v.add(x0 + h(4) * L, 0, z, h(5) * Math.PI * 2, sc, sc, sc, 0xffffff);
+    }
+    if (terrain === 'forest') {
+      for (let k = 0; k < 8; k++) {
+        const h = (salt: number) => hash01(seed, chunk, k, salt + 10);
+        const side = k % 2 === 0 ? -1 : 1;
+        const v = this.groves[k % this.groves.length];
+        const sc = 0.8 + h(3) * 0.5;
+        v.add(x0 + h(4) * L, 0, side * (27 + h(1) * 8), h(5) * Math.PI * 2, sc, sc, sc, 0xffffff);
+      }
+    }
+  }
+
+  /** Hexagonal grass tiles around the camera, tinted per terrain. Rebuilt only when the camera moves a tile. */
+  private updateHexes(seed: number, cx: number): void {
+    const tiles = this.hexTiles;
+    if (!tiles) return;
+    const b = tiles.mesh.geometry.boundingBox!;
+    const w = b.max.x - b.min.x;
+    const d = b.max.z - b.min.z;
+    const pointy = d > w; // pointy-top hexes stack in offset rows
+    const sx = pointy ? w : w * 0.75;
+    const sz = pointy ? d * 0.75 : d;
+    const ix0 = Math.floor((cx - 70) / sx);
+    const key = `${seed}:${ix0}`;
+    if (key === this.hexKey) return;
+    this.hexKey = key;
+    const ix1 = ix0 + Math.ceil(140 / sx);
+    const iz0 = Math.floor(-62 / sz);
+    const iz1 = Math.ceil(62 / sz);
+    const col = new THREE.Color();
+    const sand = this.hexSand!;
+    tiles.begin();
+    sand.begin();
+    for (let iz = iz0; iz <= iz1; iz++) {
+      for (let ix = ix0; ix <= ix1; ix++) {
+        const x = ix * sx + (pointy && iz % 2 !== 0 ? sx / 2 : 0);
+        const z = iz * sz + (!pointy && ix % 2 !== 0 ? sz / 2 : 0);
+        const terrain = chunkTerrain(seed, chunkOf(x));
+        const jitter = 0.9 + hash01(seed, ix, iz, 3) * 0.14;
+        if (terrain === 'canyon') {
+          col.setHex(Math.abs(z) >= BALANCE.world.canyonCliffZ ? 0x8a7462 : 0xc4a27e).multiplyScalar(jitter);
+          sand.add(x, 0, z, 0, 1, 1, 1, col);
+          continue;
+        }
+        if (terrain === 'forest') col.setRGB(0.55, 0.8, 0.55);
+        else col.setRGB(0.78, 1, 0.68);
+        col.multiplyScalar(jitter);
+        tiles.add(x, 0, z, 0, 1, 1, 1, col);
+      }
+    }
+    tiles.end();
+    sand.end();
+  }
+
+  /** Facing and "is moving" for an entity, from its position change between frames. */
+  private track(id: number, x: number, z: number, dt: number, faceTarget?: { x: number; z: number }): Motion {
+    let m = this.motion.get(id);
+    if (!m) {
+      m = { x, z, rot: (id * 2.39996) % (Math.PI * 2), moving: 1 };
+      this.motion.set(id, m);
+    }
+    const dx = x - m.x;
+    const dz = z - m.z;
+    if (dx * dx + dz * dz > 1e-5) {
+      m.moving = 0;
+      const want = Math.atan2(dx, dz);
+      let d = want - m.rot;
+      d = Math.atan2(Math.sin(d), Math.cos(d));
+      m.rot += d * Math.min(1, dt * 12);
+    } else m.moving += dt;
+    if (faceTarget && m.moving > 0.15) m.rot = Math.atan2(faceTarget.x - x, faceTarget.z - z);
+    m.x = x;
+    m.z = z;
+    return m;
   }
 
   /** Screen-space position of a world point, in CSS pixels. */

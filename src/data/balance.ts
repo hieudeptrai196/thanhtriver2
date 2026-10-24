@@ -75,6 +75,8 @@ export const BALANCE = {
     genChunksAhead: 3,
     richnessPerChunk: 0.06,
     regrowPerDawn: 0.05,
+    regrowMaxNightsHere: 2, // after this many nights in one place the land is exhausted: no more regrowth
+    exhaustedPct: 0.25, // below this share left, dawn warns that the area is running dry
     // Resource nodes per chunk by terrain.
     nodes: {
       plains: { tree: 14, rock: 5, bush: 16 },

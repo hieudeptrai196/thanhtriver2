@@ -163,8 +163,12 @@ export function castleGeometry(): THREE.BufferGeometry {
 
 export function wheelGeometry(): THREE.BufferGeometry {
   return merge([
-    part(new THREE.CylinderGeometry(0.7, 0.7, 0.35, 10), 0x5a3a20, 0, 0, 0, 0, 0, Math.PI / 2),
-    part(new THREE.CylinderGeometry(0.2, 0.2, 0.45, 6), 0x3a3a3a, 0, 0, 0, 0, 0, Math.PI / 2),
+    // Axle along z: the castle rolls along x on the rails.
+    part(new THREE.CylinderGeometry(0.7, 0.7, 0.22, 14), 0x4a3a2c, 0, 0, 0, Math.PI / 2),
+    part(new THREE.CylinderGeometry(0.78, 0.78, 0.08, 14), 0x8a8e96, 0, 0, -0.13, Math.PI / 2),
+    part(new THREE.BoxGeometry(1.2, 0.12, 0.1), 0x6a6e76, 0, 0, 0.12),
+    part(new THREE.BoxGeometry(0.12, 1.2, 0.1), 0x6a6e76, 0, 0, 0.12),
+    part(new THREE.CylinderGeometry(0.2, 0.2, 0.4, 8), 0x3a3a3a, 0, 0, 0, Math.PI / 2),
   ]);
 }
 
