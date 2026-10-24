@@ -32,6 +32,7 @@ class Game implements GameCtl {
   mode: Mode = { kind: 'none' };
   paused = false;
   auto = false;
+  selectMode = false;
   private autoDawn = 0;
   gameOverInfo: { best: boolean } | null = null;
   private queue: Command[] = [];
@@ -58,6 +59,11 @@ class Game implements GameCtl {
 
   togglePause(): void {
     this.paused = !this.paused;
+  }
+
+  toggleSelectMode(): void {
+    this.selectMode = !this.selectMode;
+    if (this.selectMode) this.setMode({ kind: 'none' });
   }
 
   toggleAuto(): void {

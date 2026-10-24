@@ -24,8 +24,8 @@ export const en = {
   'help.3': 'Dusk: arrows on the screen edge show where monsters will come from. Peasants go inside.',
   'help.4': 'Night: the castle cannot move. You only see (and shoot) monsters inside the light.',
   'help.5': 'Dawn: pick an upgrade, then stay (keep your defences, resources run out, +1 attack direction) or move on.',
-  'help.6': 'PC: WASD/arrows/middle-drag camera · wheel zoom · 1–4 groups · right-click order · Tab rooms · B build · Space run/stop · H recall · Q/E skills · P pause · O auto (AI plays).',
-  'help.7': 'Phone (landscape): drag to pan, pinch to zoom, tap a group then tap the ground to order, tap the castle for rooms.',
+  'help.6': 'PC: WASD/arrows/middle-drag camera · wheel zoom · left-drag box-selects units, click a unit to pick it (Shift adds) · 1–4 groups · right-click order · Tab rooms · B build · Space run/stop · H recall · Q/E skills · P pause · O auto (AI plays).',
+  'help.7': 'Phone (landscape): drag to pan, pinch to zoom, tap a group (or a unit, or use Select to drag a box) then tap the ground to order, tap the castle for rooms.',
 
   'phase.day': 'Day',
   'phase.dusk': 'Dusk',
@@ -60,6 +60,13 @@ export const en = {
   'hud.auto': 'Auto',
   'hud.autoHelp': 'Let the AI play everything; press again to take over (key O)',
   'hud.autoOn': 'Auto: the AI is playing · press Auto to take over',
+  'hud.picked': 'Selected {n}',
+  'hud.release': 'Back to auto',
+  'hud.deselect': 'Deselect',
+  'hud.selectMode': 'Select',
+  'hud.selectModeHelp': 'Drag to box-select units (PC: drag with the left mouse button)',
+  'hud.pickedHint': 'Tap the ground to send them · tap a building to repair (builders) · Back to auto when done',
+  'hud.selectModeOn': 'Select mode: drag a box around units, or tap a unit',
   'hud.fps': '{fps} FPS',
 
   'res.wood': 'Wood',
@@ -218,6 +225,7 @@ export const en = {
   'msg.wallLow': 'Castle wall is about to break!',
   'msg.wallBroken': 'The castle wall is broken!',
   'msg.coreLow': 'The core is below 30%!',
+  'msg.released': 'Units back to automatic work',
   'msg.gameOver': 'The castle has fallen',
 } as const;
 

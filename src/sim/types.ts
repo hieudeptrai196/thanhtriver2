@@ -163,6 +163,7 @@ export interface GameState {
   structs: Structure[];
   genChunk: number; // highest chunk generated
   selected: number; // selected group index into UNIT_TYPES, -1 none
+  selectedIds: number[]; // hand-picked units (box or click); takes priority over the group
   groupOrders: Record<UnitType, Order | null>;
   cooldowns: Record<AbilityId, number>;
   mods: Mods;
@@ -182,6 +183,8 @@ export interface GameState {
 
 export type Command =
   | { t: 'selectGroup'; group: number }
+  | { t: 'selectUnits'; ids: number[] }
+  | { t: 'releaseUnits' }
   | { t: 'order'; pos: Vec; targetId?: number }
   | { t: 'orderAll'; kind: 'home' }
   | { t: 'build'; type: StructType; pos: Vec }

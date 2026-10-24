@@ -31,10 +31,11 @@ Tham số URL:
 
 | Thao tác | PC | Điện thoại (xoay ngang) |
 | --- | --- | --- |
-| Camera | WASD / mũi tên / kéo chuột (trái hoặc giữa); C về thành | Kéo một ngón |
+| Camera | WASD / mũi tên / kéo chuột giữa; C về thành | Kéo một ngón |
 | Phóng to/thu nhỏ | Lăn chuột | Chụm hai ngón |
 | Chọn nhóm | 1–4 hoặc thanh nhóm | Chạm thanh nhóm |
-| Ra lệnh | Chuột phải (hoặc chuột trái khi đã chọn nhóm) | Chạm nhóm rồi chạm vị trí |
+| **Chọn từng con (kiểu Đế Chế)** | Kéo chuột trái quét khung; bấm vào một con; Shift để chọn thêm | Nút ⬚ Chọn rồi kéo khung; chạm vào một con |
+| Ra lệnh | Chuột phải (hoặc chuột trái khi đã chọn) | Chọn rồi chạm vị trí |
 | Ô phòng | Bấm vào thành / Tab | Chạm thành / nút Thành |
 | Xây ngoài thành | B | Nút Xây (chạm để xem trước, chạm lần nữa để đặt) |
 | Chạy/Dừng (chỉ ban ngày) | Space | Nút Chạy |
@@ -48,6 +49,12 @@ Tham số URL:
 - **Thợ:** chạm công trình để sửa nó trước; chạm thành để sửa tường thành.
 - **Lính giáo, cung thủ:** chạm đất để giữ vị trí; chạm thành để về mặc định (lính canh quanh thành, cung thủ lên
   tường).
+
+**Chọn từng con:** quân được chọn bằng khung hoặc bằng cú bấm nhận lệnh riêng, không ảnh hưởng tới cả nhóm. Khi ra
+lệnh cho nhiều con, chúng dàn đội hình quanh điểm đích. Mỗi con hiểu lệnh theo loại của mình: nông dân khai thác quanh
+đó, thợ sửa công trình được bấm, lính đứng giữ chỗ. Bấm **Tự động lại** để trả chúng về việc tự động của nhóm; **Bỏ
+chọn** (hoặc Esc) chỉ bỏ chọn, quân vẫn giữ lệnh riêng. Dùng được cả khi đang bật Auto: AI lo phần còn lại, bạn chỉnh
+chỗ cần đông người hơn.
 
 **Chế độ Auto:** bấm nút 🤖 Auto (hoặc phím O) thì bot chỉ huy tích hợp chơi thay toàn bộ: xây phòng, sinh quân, đặt
 đuốc và tháp, dùng kỹ năng, chọn thẻ và chọn đường lúc bình minh (đợi khoảng 2,5 giây để bạn kịp đọc). Bấm lại để tự
@@ -100,6 +107,9 @@ src/
   dừng tại chỗ (vùng đó vẫn có tài nguyên vì thế giới liên tục).
 - **"Ở lại"** được tính theo vị trí: đêm nay đứng cách chỗ đêm trước dưới 5 ô thì tính là ở lại (+1 hướng).
 - **Bánh xe** mất một phần nhỏ sát thương cận chiến vào thành; thợ tự sửa khi rảnh.
+- **Điều khiển:** tài liệu thiết kế ban đầu chỉ cho ra lệnh theo nhóm. Theo yêu cầu sau đó, game có thêm chọn từng
+  con kiểu Đế Chế (lệnh riêng đè lên lệnh nhóm cho tới khi bấm Tự động lại). Kéo chuột trái giờ dùng để quét chọn,
+  camera kéo bằng chuột giữa hoặc WASD.
 - **Người lạ xin gia nhập** tự động nhận (1 nông dân + 1 lính giáo) nếu còn chỗ, kèm thông báo.
 - **Cháy mái** có thể xảy ra từ đêm 2; lõi mất máu tới khi thợ dập xong.
 - **Đất kiệt:** ở một chỗ quá 2 đêm thì tài nguyên quanh đó ngừng hồi; thẻ "Ở lại" báo "Vùng này đã kiệt" khi đã

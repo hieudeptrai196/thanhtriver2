@@ -14,6 +14,8 @@ export class Input {
   private pointers = new Map<number, { x: number; y: number; sx: number; sy: number; button: number; type: string }>();
   private dragging = false;
   private pinchDist = 0;
+  private box: { x0: number; y0: number; x1: number; y1: number; add: boolean } | null = null;
+  private shift = false;
   private lastTouchMid: { x: number; y: number } | null = null;
   private cleanup: (() => void)[] = [];
 
@@ -65,6 +67,7 @@ export class Input {
 
   private down(e: PointerEvent): void {
     this.canvas.setPointerCapture?.(e.pointerId);
+    this.shift = e.shiftKey;
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, button: e.button, type: e.pointerType });
     if (this.pointers.size === 2) {
       const [a, b] = [...this.pointers.values()];
@@ -96,14 +99,30 @@ export class Input {
     p.x = e.clientX;
     p.y = e.clientY;
     if (!this.dragging && Math.hypot(p.x - p.sx, p.y - p.sy) > DRAG_PX) this.dragging = true;
-    // Left/one-finger or middle drag pans. Right drag does nothing (right click orders).
-    if (this.dragging && p.button !== 2) this.renderer.pan(-dx * wpp, -dy * wpp * 1.25);
+    if (!this.dragging) return;
+    // Left-drag with the mouse, or a drag in Select mode on touch, draws a selection box.
+    const boxing = this.ctl.mode.kind === 'none' && ((p.type === 'mouse' && p.button === 0) || (p.type !== 'mouse' && this.ctl.selectMode));
+    if (boxing) {
+      const r = this.canvas.getBoundingClientRect();
+      this.box = { x0: p.sx - r.left, y0: p.sy - r.top, x1: p.x - r.left, y1: p.y - r.top, add: this.shift };
+      this.hud.setBox(this.box);
+      return;
+    }
+    // Middle-drag or one-finger drag pans. Right drag does nothing (right click orders).
+    if (p.button !== 2) this.renderer.pan(-dx * wpp, -dy * wpp * 1.25);
   }
 
   private up(e: PointerEvent): void {
     const p = this.pointers.get(e.pointerId);
     this.pointers.delete(e.pointerId);
     if (this.pointers.size < 2) this.lastTouchMid = null;
+    if (this.box) {
+      this.finishBox(this.box);
+      this.box = null;
+      this.hud.setBox(null);
+      this.dragging = false;
+      return;
+    }
     if (!p || this.dragging) {
       if (this.pointers.size === 0) this.dragging = false;
       return;
@@ -138,12 +157,49 @@ export class Input {
       this.ctl.setMode({ kind: 'none' });
       return;
     }
+    // Clicking a unit picks it (Shift adds or removes).
+    const unit = this.unitAt(pos);
+    if (unit) {
+      const ids = this.shift ? (s.selectedIds.includes(unit) ? s.selectedIds.filter((i) => i !== unit) : [...s.selectedIds, unit]) : [unit];
+      this.ctl.send({ t: 'selectUnits', ids });
+      return;
+    }
     const onCastle = distToCastle(s, pos.x, pos.z) < 0.5;
-    if (s.selected >= 0) {
+    if (s.selected >= 0 || s.selectedIds.length) {
       this.orderAt(pos);
       return;
     }
     if (onCastle) this.hud.toggleRooms(true);
+  }
+
+  /** Nearest unit standing under a ground point, by id. */
+  private unitAt(pos: Vec): number | null {
+    let best: number | null = null;
+    let bestD = 0.9;
+    for (const u of this.getSim().state.units) {
+      if (u.inside) continue;
+      const d = Math.hypot(u.x - pos.x, u.z - pos.z);
+      if (d < bestD) {
+        bestD = d;
+        best = u.id;
+      }
+    }
+    return best;
+  }
+
+  private finishBox(b: { x0: number; y0: number; x1: number; y1: number; add: boolean }): void {
+    const s = this.getSim().state;
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
+    const [x0, x1] = [Math.min(b.x0, b.x1), Math.max(b.x0, b.x1)];
+    const [y0, y1] = [Math.min(b.y0, b.y1), Math.max(b.y0, b.y1)];
+    const ids: number[] = b.add ? [...s.selectedIds] : [];
+    for (const u of s.units) {
+      if (u.inside || ids.includes(u.id)) continue;
+      const p = this.renderer.project(u.x, u.z, w, h);
+      if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) ids.push(u.id);
+    }
+    this.ctl.send({ t: 'selectUnits', ids });
   }
 
   private orderAt(pos: Vec): void {
@@ -152,7 +208,7 @@ export class Input {
       this.ctl.setMode({ kind: 'none' });
       return;
     }
-    if (s.selected < 0) {
+    if (s.selected < 0 && s.selectedIds.length === 0) {
       if (distToCastle(s, pos.x, pos.z) < 0.5) this.hud.toggleRooms(true);
       return;
     }
@@ -204,6 +260,8 @@ export class Input {
       case 'Escape':
         if (this.ctl.mode.kind !== 'none') this.ctl.setMode({ kind: 'none' });
         else if (this.hud.panelOpen) this.hud.closePanels();
+        else if (s.selectedIds.length) this.ctl.send({ t: 'selectUnits', ids: [] });
+        else if (this.ctl.selectMode) this.ctl.toggleSelectMode();
         else if (s.selected >= 0) this.ctl.send({ t: 'selectGroup', group: -1 });
         else this.ctl.togglePause();
         break;

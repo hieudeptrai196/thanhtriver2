@@ -29,6 +29,8 @@ export interface GameCtl {
   togglePause(): void;
   auto: boolean;
   toggleAuto(): void;
+  selectMode: boolean;
+  toggleSelectMode(): void;
   toMenu(): void;
   restart(): void;
   gameOverInfo: { best: boolean } | null;
@@ -82,6 +84,10 @@ export class Hud {
   private runBtn = el('button', 'btn run big');
   private pauseBtn = el('button', 'btn small');
   private autoBtn = el('button', 'btn small auto');
+  private selectBtn = el('button', 'btn');
+  private pickBar = el('div', 'pick-bar');
+  private pickText = el('span', 'pick-text');
+  private box = el('div', 'select-box');
   private hint = el('div', 'hint');
   private toasts = el('div', 'toasts');
   private arrows = el('div', 'arrows');
@@ -162,7 +168,15 @@ export class Hud {
     setLabel(recallBtn, '📯', t('hud.recall'));
     recallBtn.onclick = () => ctl.send({ t: 'orderAll', kind: 'home' });
     this.runBtn.onclick = () => ctl.send({ t: 'toggleMove' });
-    actions.append(buildBtn, roomsBtn, recallBtn, this.runBtn);
+    setLabel(this.selectBtn, '⬚', t('hud.selectMode'));
+    this.selectBtn.title = t('hud.selectModeHelp');
+    this.selectBtn.onclick = () => ctl.toggleSelectMode();
+    actions.append(this.selectBtn, buildBtn, roomsBtn, recallBtn, this.runBtn);
+    const release = el('button', 'btn small', `↺ ${t('hud.release')}`);
+    release.onclick = () => ctl.send({ t: 'releaseUnits' });
+    const deselect = el('button', 'btn small', `✕ ${t('hud.deselect')}`);
+    deselect.onclick = () => ctl.send({ t: 'selectUnits', ids: [] });
+    this.pickBar.append(this.pickText, release, deselect);
     bottom.append(groups, actions);
 
     this.rooms = el('div', 'panel rooms hidden');
@@ -170,7 +184,7 @@ export class Hud {
     this.dawn = el('div', 'modal dawn hidden');
     this.over = el('div', 'modal over hidden');
     this.pauseBanner.textContent = t('hud.paused');
-    this.root.append(top, this.arrows, this.hint, this.toasts, this.pauseBanner, bottom, this.rooms, this.build, this.dawn, this.over, this.fps);
+    this.root.append(top, this.box, this.pickBar, this.arrows, this.hint, this.toasts, this.pauseBanner, bottom, this.rooms, this.build, this.dawn, this.over, this.fps);
   }
 
   private sim!: Sim;
@@ -183,6 +197,19 @@ export class Hud {
     if (s.cooldowns[id] > 0 || s.phase === 'dawn') return;
     if (id === 'arrowRain') this.ctl.setMode(this.ctl.mode.kind === 'skill' ? { kind: 'none' } : { kind: 'skill', id });
     else this.ctl.send({ t: 'ability', id });
+  }
+
+  /** Rubber-band rectangle in CSS pixels, or null to hide it. */
+  setBox(r: { x0: number; y0: number; x1: number; y1: number } | null): void {
+    if (!r) {
+      this.box.style.display = 'none';
+      return;
+    }
+    this.box.style.display = 'block';
+    this.box.style.left = `${Math.min(r.x0, r.x1)}px`;
+    this.box.style.top = `${Math.min(r.y0, r.y1)}px`;
+    this.box.style.width = `${Math.abs(r.x1 - r.x0)}px`;
+    this.box.style.height = `${Math.abs(r.y1 - r.y0)}px`;
   }
 
   get panelOpen(): boolean {
@@ -256,6 +283,16 @@ export class Hud {
     this.autoBtn.title = t('hud.autoHelp');
     this.autoBtn.classList.toggle('on', this.ctl.auto);
 
+    // Hand-picked units.
+    this.selectBtn.classList.toggle('on', this.ctl.selectMode);
+    const picked = s.units.filter((u) => s.selectedIds.includes(u.id));
+    this.pickBar.classList.toggle('show', picked.length > 0);
+    if (picked.length) {
+      const by = UNIT_TYPES.map((type) => [type, picked.filter((u) => u.type === type).length] as const).filter(([, n]) => n > 0);
+      const txt = `${t('hud.picked', { n: picked.length })}: ${by.map(([type, n]) => `${UNIT_ICON[type]}${n}`).join(' ')}`;
+      if (this.pickText.textContent !== txt) this.pickText.textContent = txt;
+    }
+
     const counts = groupCounts(s);
     UNIT_TYPES.forEach((type, i) => {
       const b = this.groupBtns[i];
@@ -288,6 +325,8 @@ export class Hud {
     else if (canRun) hint = t('hud.toDest');
     else if (c.fire > 0) hint = t('hud.fire');
     else if (s.phase === 'night' && s.plan && s.monsters.length === 0 && s.plan.waves.some((w) => w.spawned < w.count)) hint = t('hud.rest');
+    else if (s.selectedIds.length) hint = t('hud.pickedHint');
+    else if (this.ctl.selectMode) hint = t('hud.selectModeOn');
     else if (s.selected >= 0) hint = t(`unit.hint.${UNIT_TYPES[s.selected]}` as MessageKey);
     if (this.hint.textContent !== hint) this.hint.textContent = hint;
     this.hint.classList.toggle('show', hint !== '');

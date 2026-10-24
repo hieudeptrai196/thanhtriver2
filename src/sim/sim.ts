@@ -100,6 +100,7 @@ export function createState(seed: number): GameState {
     structs: [],
     genChunk: -2,
     selected: -1,
+    selectedIds: [],
     groupOrders: { peasant: null, builder: null, spear: null, archer: null },
     cooldowns: { arrowRain: 0, bell: 0 },
     mods: {
@@ -306,6 +307,7 @@ export class Sim {
   private warned = { wall: false, core: false, wallBroken: false };
 
   constructor(state: GameState) {
+    state.selectedIds ??= []; // saves from before hand-picking existed
     this.state = state;
     this.grid.rebuild(state);
   }
@@ -344,6 +346,16 @@ export class Sim {
     switch (c.t) {
       case 'selectGroup':
         s.selected = c.group >= 0 && c.group < UNIT_TYPES.length ? c.group : -1;
+        s.selectedIds = [];
+        break;
+      case 'selectUnits': {
+        const alive = new Set(s.units.filter((u) => !u.inside).map((u) => u.id));
+        s.selectedIds = c.ids.filter((id) => alive.has(id));
+        if (s.selectedIds.length) s.selected = -1;
+        break;
+      }
+      case 'releaseUnits':
+        this.releaseUnits();
         break;
       case 'order':
         this.order(c.pos, c.targetId);
@@ -394,20 +406,56 @@ export class Sim {
     }
   }
 
-  private order(pos: Vec, targetId?: number): void {
+  /** What an order at `pos` means for one unit type (shared by group and hand-picked orders). */
+  private orderFor(type: UnitType, pos: Vec, targetId?: number): Order | null {
     const s = this.state;
-    if (s.selected < 0) return;
-    const type = UNIT_TYPES[s.selected];
     const onCastle = distToCastle(s, pos.x, pos.z) < 0.5;
     const p = { x: pos.x, z: pos.z };
-    let order: Order | null;
-    if (type === 'peasant') order = onCastle ? { kind: 'home', pos: p } : { kind: 'gather', pos: p };
-    else if (type === 'builder') {
+    if (type === 'peasant') return onCastle ? { kind: 'home', pos: p } : { kind: 'gather', pos: p };
+    if (type === 'builder') {
       const st = targetId !== undefined ? s.structs.find((x) => x.id === targetId) : this.structAt(pos);
-      order = onCastle ? { kind: 'repair', pos: p, targetId: T_WALL } : st ? { kind: 'repair', pos: p, targetId: st.id } : { kind: 'move', pos: p };
-    } else order = onCastle ? null : { kind: 'move', pos: p };
-    this.setGroupOrder(type, order);
+      return onCastle ? { kind: 'repair', pos: p, targetId: T_WALL } : st ? { kind: 'repair', pos: p, targetId: st.id } : { kind: 'move', pos: p };
+    }
+    return onCastle ? null : { kind: 'move', pos: p };
+  }
+
+  private order(pos: Vec, targetId?: number): void {
+    const s = this.state;
+    const p = { x: pos.x, z: pos.z };
+    if (s.selectedIds.length) {
+      // Hand-picked units: each gets its own order, spread around the point so they do not stack.
+      const picked = s.units.filter((u) => s.selectedIds.includes(u.id));
+      const onCastle = distToCastle(s, pos.x, pos.z) < 0.5;
+      picked.forEach((u, i) => {
+        const r = i === 0 || onCastle ? 0 : 0.95 * Math.sqrt(i);
+        const a = i * 2.39996;
+        const spot = { x: pos.x + Math.cos(a) * r, z: pos.z + Math.sin(a) * r };
+        u.order = this.orderFor(u.type, onCastle ? p : spot, targetId);
+        u.targetId = -1;
+        u.work = 0;
+        if (u.type === 'peasant' && u.order?.kind !== 'home' && u.inside && s.phase === 'day') this.exitCastle(u);
+      });
+      this.emit('fx.order', { pos: p });
+      return;
+    }
+    if (s.selected < 0) return;
+    const type = UNIT_TYPES[s.selected];
+    this.setGroupOrder(type, this.orderFor(type, pos, targetId));
     this.emit('fx.order', { pos: p });
+  }
+
+  /** Hand-picked units drop their own orders and go back to their group's default work. */
+  private releaseUnits(): void {
+    const s = this.state;
+    for (const u of s.units) {
+      if (!s.selectedIds.includes(u.id)) continue;
+      const g = s.groupOrders[u.type];
+      u.order = g ? { ...g, pos: { ...g.pos } } : null;
+      u.targetId = -1;
+      u.work = 0;
+    }
+    s.selectedIds = [];
+    this.emit('msg.released');
   }
 
   private structAt(pos: Vec): Structure | undefined {
@@ -1523,7 +1571,10 @@ export class Sim {
   private cleanup(): void {
     const s = this.state;
     if (s.monsters.some((m) => m.hp <= 0)) s.monsters = s.monsters.filter((m) => m.hp > 0);
-    if (s.units.some((u) => u.hp <= 0)) s.units = s.units.filter((u) => u.hp > 0);
+    if (s.units.some((u) => u.hp <= 0)) {
+      s.units = s.units.filter((u) => u.hp > 0);
+      if (s.selectedIds.length) s.selectedIds = s.selectedIds.filter((id) => s.units.some((u) => u.id === id));
+    }
   }
 
   private warnings(): void {

@@ -24,8 +24,8 @@ export const vi: Record<MessageKey, string> = {
   'help.3': 'Hoàng hôn: mũi tên ở mép màn hình báo hướng quái sẽ tới. Nông dân vào thành trú.',
   'help.4': 'Đêm: thành không thể chạy. Chỉ thấy (và bắn được) quái trong vùng sáng.',
   'help.5': 'Bình minh: chọn một thẻ nâng cấp, rồi chọn ở lại (giữ công trình, tài nguyên cạn dần, quái thêm 1 hướng) hay đi tiếp.',
-  'help.6': 'PC: WASD/mũi tên/kéo chuột giữa để xem · lăn chuột phóng to · 1–4 chọn nhóm · chuột phải ra lệnh · Tab ô phòng · B xây · Space chạy/dừng · H gọi về · Q/E kỹ năng · P tạm dừng · O auto (AI tự chơi).',
-  'help.7': 'Điện thoại (xoay ngang): kéo để di chuyển, chụm để phóng to, chạm nhóm rồi chạm đất để ra lệnh, chạm thành để mở ô phòng.',
+  'help.6': 'PC: WASD/mũi tên/kéo chuột giữa để xem · lăn chuột phóng to · kéo chuột trái để quét chọn quân, bấm vào một con để chọn (giữ Shift để chọn thêm) · 1–4 chọn nhóm · chuột phải ra lệnh · Tab ô phòng · B xây · Space chạy/dừng · H gọi về · Q/E kỹ năng · P tạm dừng · O auto (AI tự chơi).',
+  'help.7': 'Điện thoại (xoay ngang): kéo để di chuyển, chụm để phóng to, chạm nhóm (hoặc chạm một con, hoặc bật nút Chọn rồi kéo khung) rồi chạm đất để ra lệnh, chạm thành để mở ô phòng.',
 
   'phase.day': 'Ngày',
   'phase.dusk': 'Hoàng hôn',
@@ -60,6 +60,13 @@ export const vi: Record<MessageKey, string> = {
   'hud.auto': 'Auto',
   'hud.autoHelp': 'Để AI tự chơi toàn bộ; bấm lại để tự điều khiển (phím O)',
   'hud.autoOn': 'Auto: AI đang chơi · bấm Auto để tự điều khiển',
+  'hud.picked': 'Đã chọn {n}',
+  'hud.release': 'Tự động lại',
+  'hud.deselect': 'Bỏ chọn',
+  'hud.selectMode': 'Chọn',
+  'hud.selectModeHelp': 'Kéo để quét chọn quân (PC: kéo chuột trái)',
+  'hud.pickedHint': 'Chạm đất để điều quân tới · chạm công trình để thợ sửa · xong thì bấm Tự động lại',
+  'hud.selectModeOn': 'Chế độ chọn: kéo khung quanh quân, hoặc chạm vào một con',
   'hud.fps': '{fps} FPS',
 
   'res.wood': 'Gỗ',
@@ -218,5 +225,6 @@ export const vi: Record<MessageKey, string> = {
   'msg.wallLow': 'Tường thành sắp vỡ!',
   'msg.wallBroken': 'Tường thành đã vỡ!',
   'msg.coreLow': 'Lõi thành dưới 30%!',
+  'msg.released': 'Quân đã quay lại làm việc tự động',
   'msg.gameOver': 'Tòa thành đã thất thủ',
 };
