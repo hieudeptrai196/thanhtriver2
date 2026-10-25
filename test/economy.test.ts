@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { BALANCE } from '../src/data/balance';
 import { Sim } from '../src/sim/sim';
 import { runSeconds } from './helpers';
 
@@ -31,21 +30,43 @@ describe('economy', () => {
     expect(s.units.filter((u) => u.type === 'peasant').every((u) => u.targetId !== 9999 || u.job !== 'gather')).toBe(true);
   });
 
-  it('the land stops regrowing after a long camp', () => {
+  it('reserves never regrow, and dawn warns when the camp runs dry', () => {
     const sim = Sim.create(5);
     const s = sim.state;
+    for (const n of s.nodes) if (Math.abs(n.x - s.castle.x) <= 30) n.amount = Math.floor(n.max * 0.1);
     const node = s.nodes[0];
-    node.amount = 10;
+    const before = node.amount;
     s.units = []; // nobody gathers
-    s.castle.nightsHere = BALANCE.world.regrowMaxNightsHere; // the next dawn makes it one more
-    s.castle.lastNightX = s.castle.x;
     s.night = 2;
     s.phase = 'night';
     s.phaseTime = s.phaseLength;
     sim.step();
     expect(s.phase).toBe('dawn');
-    expect(node.amount).toBe(10);
+    expect(node.amount).toBe(before);
     expect(s.routes[0].exhausted).toBe(true);
+  });
+
+  it('a short dawn weakens, a second one makes a villager leave; eating clears it', () => {
+    const sim = Sim.create(6);
+    const s = sim.state;
+    const dawnNow = () => {
+      s.phase = 'night';
+      s.phaseTime = s.phaseLength;
+      sim.step();
+    };
+    const hp = s.units.map((u) => u.hp);
+    s.res.food = 0;
+    dawnNow();
+    expect(s.hunger).toBe(1);
+    expect(s.units.map((u) => u.hp)).toEqual(hp); // no sudden HP loss
+    const count = s.units.length;
+    s.res.food = 0;
+    dawnNow();
+    expect(s.hunger).toBe(2);
+    expect(s.units.length).toBe(count - 1);
+    s.res.food = 500;
+    dawnNow();
+    expect(s.hunger).toBe(0);
   });
 
   it('flagged peasants gather near the flag', () => {

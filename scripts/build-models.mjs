@@ -1,12 +1,12 @@
-// Trims the KayKit source models (CC0, Kay Lousberg) down to what the game uses and writes public/models/*.glb.
-// Usage: node scripts/build-models.mjs <folder with the downloaded KayKit files>
-// See CREDITS.md for where each source file comes from.
+// Trims the source models down to what the game uses and writes public/models/*.glb.
+// KayKit (CC0, Kay Lousberg) and Kenney Nature Kit (CC0, Kenney) — see CREDITS.md for every source file.
+// Usage: node scripts/build-models.mjs <folder with the KayKit files | -> [<Kenney "Models/GLTF format" folder>]
 import { mkdirSync, statSync } from 'node:fs';
 import { NodeIO } from '@gltf-transform/core';
 import { dedup, prune, resample } from '@gltf-transform/functions';
 
 const src = process.argv[2];
-if (!src) throw new Error('pass the folder with the downloaded KayKit files');
+if (!src) throw new Error('pass the folder with the downloaded KayKit files, or - to skip KayKit');
 const out = 'public/models';
 mkdirSync(out, { recursive: true });
 const io = new NodeIO();
@@ -33,7 +33,6 @@ const PROPS = {
   rockC: 'rock_single_C',
   mountain: 'mountain_A',
   flag: 'flag_blue',
-  hex: 'hex_grass',
   hillsA: 'hills_A_trees',
   hillsB: 'hills_B_trees',
   peak: 'mountain_A_grass_trees',
@@ -41,7 +40,28 @@ const PROPS = {
   groveB: 'trees_B_large',
 };
 
-for (const [name, c] of Object.entries(CHARACTERS)) {
+// Kenney Nature Kit: ground decoration and crop fields for food nodes.
+const KENNEY = {
+  grass: 'grass',
+  grassLarge: 'grass_large',
+  grassLeafs: 'grass_leafs',
+  flowerRed: 'flower_redA',
+  flowerYellow: 'flower_yellowA',
+  flowerPurple: 'flower_purpleA',
+  mushroomRed: 'mushroom_redGroup',
+  mushroomTan: 'mushroom_tanGroup',
+  bushSmall: 'plant_bushSmall',
+  pebble: 'rock_smallA',
+  pebbleFlat: 'rock_smallFlatA',
+  log: 'log',
+  stumpOld: 'stump_old',
+  campfire: 'campfire_logs',
+  pumpkin: 'crop_pumpkin',
+  wheat: 'crops_wheatStageB',
+  corn: 'crops_cornStageD',
+};
+
+for (const [name, c] of src === '-' ? [] : Object.entries(CHARACTERS)) {
   const doc = await io.read(`${src}/${c.file}`);
   const root = doc.getRoot();
   for (const node of root.listNodes()) if (c.drop.includes(node.getName())) node.dispose();
@@ -58,10 +78,21 @@ for (const [name, c] of Object.entries(CHARACTERS)) {
   console.log(path, Math.round(statSync(path).size / 1024) + 'KB');
 }
 
-for (const [name, file] of Object.entries(PROPS)) {
+for (const [name, file] of src === '-' ? [] : Object.entries(PROPS)) {
   const doc = await io.read(`${src}/med/${file}.gltf`);
   await doc.transform(prune(), dedup());
   const path = `${out}/${name}.glb`;
   await io.write(path, doc);
   console.log(path, Math.round(statSync(path).size / 1024) + 'KB');
+}
+
+const kenneyDir = process.argv[3];
+if (kenneyDir) {
+  for (const [name, file] of Object.entries(KENNEY)) {
+    const doc = await io.read(`${kenneyDir}/${file}.glb`);
+    await doc.transform(prune(), dedup());
+    const path = `${out}/k_${name}.glb`;
+    await io.write(path, doc);
+    console.log(path, Math.round(statSync(path).size / 1024) + 'KB');
+  }
 }

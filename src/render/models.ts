@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
-// KayKit models (CC0, Kay Lousberg, www.kaylousberg.com). See CREDITS.md.
+// KayKit models (CC0, Kay Lousberg, www.kaylousberg.com) and Kenney Nature Kit (CC0, www.kenney.nl). See CREDITS.md.
 // Characters are baked into a handful of static poses per animation so crowds can be drawn with InstancedMesh.
 
 export interface Baked {
@@ -29,17 +29,57 @@ export type PropName =
   | 'rockC'
   | 'mountain'
   | 'flag'
-  | 'hex'
   | 'hillsA'
   | 'hillsB'
   | 'peak'
   | 'groveA'
   | 'groveB';
 
+export type DecorName =
+  | 'grass'
+  | 'grassLarge'
+  | 'grassLeafs'
+  | 'flowerRed'
+  | 'flowerYellow'
+  | 'flowerPurple'
+  | 'mushroomRed'
+  | 'mushroomTan'
+  | 'bushSmall'
+  | 'pebble'
+  | 'pebbleFlat'
+  | 'log'
+  | 'stumpOld'
+  | 'campfire'
+  | 'pumpkin'
+  | 'wheat'
+  | 'corn';
+
 export interface Models {
   chars: Record<CharName, CharModel>;
   props: Record<PropName, Baked>;
+  decor: Record<DecorName, Baked>;
 }
+
+// Kenney Nature Kit pieces, sized for the scene.
+const DECOR_SIZE: Record<DecorName, ['h' | 'w', number]> = {
+  grass: ['h', 0.35],
+  grassLarge: ['h', 0.55],
+  grassLeafs: ['h', 0.4],
+  flowerRed: ['h', 0.45],
+  flowerYellow: ['h', 0.45],
+  flowerPurple: ['h', 0.45],
+  mushroomRed: ['h', 0.35],
+  mushroomTan: ['h', 0.35],
+  bushSmall: ['h', 0.55],
+  pebble: ['w', 0.4],
+  pebbleFlat: ['w', 0.55],
+  log: ['w', 1.4],
+  stumpOld: ['h', 0.5],
+  campfire: ['w', 1.0],
+  pumpkin: ['w', 0.75],
+  wheat: ['h', 1.0],
+  corn: ['h', 1.5],
+};
 
 const CHAR_ANIMS: Record<CharName, { move: string; act: string; height: number }> = {
   peasant: { move: 'Walking_A', act: 'Interact', height: 1.95 },
@@ -67,7 +107,6 @@ const PROP_SIZE: Record<PropName, ['h' | 'w', number]> = {
   rockC: ['w', 1.3],
   mountain: ['w', 3.6],
   flag: ['h', 1.6],
-  hex: ['w', 3.2],
   hillsA: ['w', 10],
   hillsB: ['w', 10],
   peak: ['w', 12],
@@ -75,8 +114,27 @@ const PROP_SIZE: Record<PropName, ['h' | 'w', number]> = {
   groveB: ['w', 4.5],
 };
 
+// Kenney Nature Kit colours retuned to match the game's ground palette (by material name).
+const KENNEY_COLORS: Record<string, number> = {
+  grass: 0x5f9a3a,
+  dirt: 0x8a6440,
+  wood: 0xa0703f,
+  woodDark: 0x6e4a2a,
+  woodBark: 0x7a5232,
+  woodInner: 0xd9b98a,
+  corn: 0xd8b04a,
+  leafsFall: 0xd9782c,
+  colorRed: 0xc9343a,
+  colorYellow: 0xe8b830,
+  colorPurple: 0x8c6ad8,
+  colorTan: 0xc8935a,
+  _defaultMat: 0x9a9a9e,
+};
+
 function toLambert(m: THREE.Material): THREE.Material {
   const src = m as THREE.MeshStandardMaterial;
+  const tuned = KENNEY_COLORS[src.name];
+  if (tuned !== undefined) return new THREE.MeshLambertMaterial({ color: tuned, flatShading: true });
   if (src.name === 'Glow' || (src.emissive && src.emissive.getHex() !== 0 && !src.map)) {
     // Skeleton eyes: unlit so they glow in the dark.
     return new THREE.MeshBasicMaterial({ color: src.emissive?.getHex() || 0x60f0ff });
@@ -221,19 +279,13 @@ async function loadChar(loader: GLTFLoader, base: string, name: CharName): Promi
   return { idle: wrap(idle), move: move.map(wrap), act: act.map(wrap) };
 }
 
-async function loadProp(loader: GLTFLoader, base: string, name: PropName): Promise<Baked> {
-  const gltf = await loader.loadAsync(`${base}${name}.glb`);
+async function loadProp(loader: GLTFLoader, base: string, name: PropName | DecorName, decor = false): Promise<Baked> {
+  const gltf = await loader.loadAsync(`${base}${decor ? 'k_' : ''}${name}.glb`);
   const mats = new Map<THREE.Material, number>();
   const matList: THREE.Material[] = [];
   const geo = bake(gltf.scene, mats, matList);
-  const [axis, size] = PROP_SIZE[name];
+  const [axis, size] = decor ? DECOR_SIZE[name as DecorName] : PROP_SIZE[name as PropName];
   normalize([geo], axis, size);
-  if (name === 'hex') {
-    // Ground tiles: the grass top sits at y = 0, the slab hangs below.
-    geo.computeBoundingBox();
-    geo.translate(0, -geo.boundingBox!.max.y, 0);
-    geo.computeBoundingBox();
-  }
   return { geo, materials: matList };
 }
 
@@ -242,12 +294,15 @@ export async function loadModels(): Promise<Models> {
   const base = `${import.meta.env.BASE_URL}models/`;
   const charNames: CharName[] = ['peasant', 'builder', 'spear', 'archer', 'fast', 'brute', 'ranged'];
   const propNames = Object.keys(PROP_SIZE) as PropName[];
-  const [chars, props] = await Promise.all([
+  const decorNames = Object.keys(DECOR_SIZE) as DecorName[];
+  const [chars, props, decor] = await Promise.all([
     Promise.all(charNames.map((n) => loadChar(loader, base, n))),
     Promise.all(propNames.map((n) => loadProp(loader, base, n))),
+    Promise.all(decorNames.map((n) => loadProp(loader, base, n, true))),
   ]);
   return {
     chars: Object.fromEntries(charNames.map((n, i) => [n, chars[i]])) as Record<CharName, CharModel>,
     props: Object.fromEntries(propNames.map((n, i) => [n, props[i]])) as Record<PropName, Baked>,
+    decor: Object.fromEntries(decorNames.map((n, i) => [n, decor[i]])) as Record<DecorName, Baked>,
   };
 }

@@ -1,16 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { BALANCE } from '../src/data/balance';
-import { dayLength, nightLength } from '../src/sim/difficulty';
+import { dayLength, duskLength, nightLength } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/sim';
 import { passDawn, runUntil } from './helpers';
 
 describe('day / night cycle', () => {
-  it('phase lengths follow the balance file', () => {
-    expect(dayLength(1)).toBe(150);
-    expect(dayLength(10)).toBe(90);
-    expect(nightLength(1)).toBe(90);
-    expect(nightLength(10)).toBe(150);
-    expect(dayLength(30)).toBe(90);
+  it('phase lengths follow the three GDD stages', () => {
+    expect([dayLength(1), dayLength(2), dayLength(3), dayLength(6), dayLength(7), dayLength(30)]).toEqual([150, 150, 165, 165, 180, 180]);
+    expect([duskLength(1), duskLength(4), duskLength(9)]).toEqual([20, 25, 30]);
+    expect([nightLength(1), nightLength(5), nightLength(12)]).toEqual([100, 130, 150]);
   });
 
   it('runs day → dusk → night → dawn → day with the right durations', () => {
@@ -20,7 +17,7 @@ describe('day / night cycle', () => {
     const dayTicks = runUntil(sim, () => s.phase === 'dusk');
     expect(dayTicks / 60).toBeCloseTo(dayLength(1), 0);
     const duskTicks = runUntil(sim, () => s.phase === 'night');
-    expect(duskTicks / 60).toBeCloseTo(BALANCE.phases.dusk, 0);
+    expect(duskTicks / 60).toBeCloseTo(duskLength(1), 0);
     const nightTicks = runUntil(sim, () => s.phase !== 'night');
     expect(s.phase).toBe('dawn');
     expect(nightTicks / 60).toBeCloseTo(nightLength(1), 0);

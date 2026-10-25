@@ -1,4 +1,4 @@
-import { BALANCE, lerpByNight, type Dir, type TerrainType } from '../data/balance';
+import { BALANCE, type Dir, type TerrainType } from '../data/balance';
 
 const D = BALANCE.difficulty;
 const P = BALANCE.phases;
@@ -33,12 +33,29 @@ export function isBossNight(night: number): boolean {
   return night % D.bossEvery === 0;
 }
 
+export function stage(night: number): number {
+  let i = 0;
+  P.stageFrom.forEach((from, k) => {
+    if (night >= from) i = k;
+  });
+  return i;
+}
+
 export function dayLength(night: number): number {
-  return lerpByNight(night, P.dayStart, P.dayEnd);
+  return P.day[stage(night)];
+}
+
+export function duskLength(night: number): number {
+  return P.dusk[stage(night)];
 }
 
 export function nightLength(night: number): number {
-  return lerpByNight(night, P.nightStart, P.nightEnd);
+  return P.night[stage(night)];
+}
+
+/** Monsters grow with each night camped at the same spot beyond the second ("they learn the way"). */
+export function awarenessMult(nightsHere: number): number {
+  return 1 + Math.max(0, nightsHere - 1) * BALANCE.difficulty.awarenessPerNight;
 }
 
 export function monsterHpMult(night: number, danger: number): number {

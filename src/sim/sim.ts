@@ -14,7 +14,9 @@ import {
 } from '../data/balance';
 import {
   allowedDirs,
+  awarenessMult,
   dayLength,
+  duskLength,
   dirCount,
   isBossNight,
   monsterCount,
@@ -122,8 +124,10 @@ export function createState(seed: number): GameState {
     overflowHp: 0,
     wanderTimer: 0,
     stats: { kills: 0, bosses: 0, nightsSurvived: 0 },
-    nightStats: { kills: 0, lost: 0, gold: 0, food: 0, hungry: false },
+    nightStats: emptyNightStats(),
     strangerDone: true,
+    hunger: 0,
+    history: [],
     fireDone: false,
     newRegion: false,
   };
@@ -294,7 +298,33 @@ export function resourcePct(s: GameState, x: number, radius = 30): number {
 }
 
 export function stayedHere(s: GameState): boolean {
-  return s.night > 1 && Math.abs(s.castle.x - s.castle.lastNightX) < 5;
+  return s.night > 1 && Math.abs(s.castle.x - s.castle.lastNightX) < BALANCE.difficulty.campRadius;
+}
+
+export function emptyNightStats(): GameState['nightStats'] {
+  return { kills: 0, lost: 0, gold: 0, food: 0, hungry: false, structLost: 0, wallDamage: 0, coreDamage: 0, cause: '', lostByType: {} };
+}
+
+/** Speed and damage multiplier from hunger. */
+export function hungerMult(s: GameState): number {
+  return s.hunger <= 0 ? 1 : s.hunger === 1 ? BALANCE.hunger.weak : BALANCE.hunger.starving;
+}
+
+/** How many more dawns the current food feeds everyone. */
+export function foodDawns(s: GameState): number {
+  const need = s.units.length * BALANCE.foodPerUnit;
+  return need > 0 ? Math.floor(s.res.food / need) : 99;
+}
+
+/** FNV-1a hash of the whole state, for replay and save checks. */
+export function stateHash(s: GameState): string {
+  const str = JSON.stringify(s);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
 }
 
 // ---------------------------------------------------------------- simulation
@@ -307,7 +337,11 @@ export class Sim {
   private warned = { wall: false, core: false, wallBroken: false };
 
   constructor(state: GameState) {
-    state.selectedIds ??= []; // saves from before hand-picking existed
+    // Fields added after the first release.
+    state.selectedIds ??= [];
+    state.hunger ??= 0;
+    state.history ??= [];
+    state.nightStats = { ...emptyNightStats(), ...state.nightStats };
     this.state = state;
     this.grid.rebuild(state);
   }
@@ -322,6 +356,10 @@ export class Sim {
 
   save(): string {
     return JSON.stringify(this.state);
+  }
+
+  hash(): string {
+    return stateHash(this.state);
   }
 
   drainEvents(): GameEvent[] {
@@ -701,7 +739,7 @@ export class Sim {
     if (s.phase === 'day') {
       if (s.castle.moving) this.stopCastle();
       s.phase = 'dusk';
-      s.phaseLength = BALANCE.phases.dusk;
+      s.phaseLength = duskLength(s.night);
       this.planNight();
       this.emit('msg.dusk', { level: 'warn' });
     } else if (s.phase === 'dusk') {
@@ -725,7 +763,7 @@ export class Sim {
     const raw = dirs.map(() => range(s, 0.6, 1.4));
     const sum = raw.reduce((a, b) => a + b, 0);
     const weights = raw.map((w) => w / sum);
-    const total = monsterCount(s.night);
+    const total = Math.round(monsterCount(s.night) * awarenessMult(stayed ? s.castle.nightsHere + 1 : 1));
     const wc = waveCount(s.night);
     const length = nightLength(s.night);
     const seg = (length - 4) / wc;
@@ -748,30 +786,48 @@ export class Sim {
     const st = s.nightStats;
     // Survivors of the night flee at sunrise.
     s.monsters = [];
-    s.plan = null;
     s.castle.fire = 0;
     s.stats.nightsSurvived = s.night;
-    s.castle.nightsHere = stayedHere(s) ? s.castle.nightsHere + 1 : 1;
+    const stayed = stayedHere(s);
+    const route: 'stay' | 'move' | 'start' = s.night === 1 ? 'start' : stayed ? 'stay' : 'move';
+    s.castle.nightsHere = stayed ? s.castle.nightsHere + 1 : 1;
     s.castle.lastNightX = s.castle.x;
-    // Food.
+    // Food: a short dawn weakens everyone; two in a row also make a villager leave.
     const need = s.units.length * BALANCE.foodPerUnit;
     st.food = Math.min(need, s.res.food);
     st.hungry = s.res.food < need;
     s.res.food = Math.max(0, s.res.food - need);
     if (st.hungry) {
-      for (const u of s.units) u.hp -= u.maxHp * BALANCE.hungerDamage;
-      const before = s.units.length;
-      s.units = s.units.filter((u) => u.hp > 0);
-      st.lost += before - s.units.length;
-    }
-    // A little regrowth, until the land around a long camp is exhausted.
-    if (s.castle.nightsHere <= BALANCE.world.regrowMaxNightsHere) {
-      for (const n of s.nodes) n.amount = Math.min(n.max, n.amount + Math.floor(n.max * BALANCE.world.regrowPerDawn));
-    }
+      s.hunger++;
+      this.emit(s.hunger === 1 ? 'msg.hungry' : 'msg.starving', { level: 'danger' });
+      if (s.hunger >= BALANCE.hunger.desertFrom && s.units.length > 0) {
+        const order: UnitType[] = ['peasant', 'builder', 'spear', 'archer'];
+        const leaver = order.map((t) => s.units.filter((u) => u.type === t).pop()).find(Boolean)!;
+        s.units = s.units.filter((u) => u !== leaver);
+        st.lost++;
+        this.emit('msg.deserted', { params: { unit: leaver.type }, level: 'danger' });
+      }
+    } else s.hunger = 0;
+    s.history.push({
+      night: s.night,
+      route,
+      terrain: chunkTerrain(s.seed, chunkOf(s.castle.x)),
+      dirs: s.plan?.dirs.length ?? 0,
+      monsters: s.plan?.total ?? 0,
+      kills: st.kills,
+      lost: st.lost,
+      structLost: st.structLost,
+      wallDamage: Math.round(st.wallDamage),
+      coreDamage: Math.round(st.coreDamage),
+      food: st.food,
+      hungry: st.hungry,
+      cause: st.cause,
+    });
     // Card offer.
     const pool = CARD_IDS.filter((c) => c !== 'extraSlot' || slotCount(s) < C.maxSlots);
     s.cards = shuffle(s, [...pool]).slice(0, 3);
     s.cardPicked = false;
+    s.plan = null;
     s.night++;
     s.routes = this.routeOptions();
     s.routePicked = false;
@@ -797,7 +853,7 @@ export class Sim {
       danger: this.dangerLevel(here, stayDirs),
       resourcePct: resourcePct(s, s.castle.x),
       travel: 0,
-      exhausted: s.castle.nightsHere >= BALANCE.world.regrowMaxNightsHere || resourcePct(s, s.castle.x) < BALANCE.world.exhaustedPct,
+      exhausted: resourcePct(s, s.castle.x) < BALANCE.world.exhaustedPct,
     });
     for (let i = 1; i <= BALANCE.route.aheadChoices; i++) {
       const chunk = here + i;
@@ -828,7 +884,7 @@ export class Sim {
     s.phase = 'day';
     s.phaseTime = 0;
     s.phaseLength = dayLength(s.night);
-    s.nightStats = { kills: 0, lost: 0, gold: 0, food: 0, hungry: false };
+    s.nightStats = emptyNightStats();
     s.strangerDone = false;
     s.wanderTimer = 0;
     for (const u of s.units) {
@@ -868,6 +924,7 @@ export class Sim {
       s.fireDone = true;
       if (nextRandom(s) < C.fireChancePerNight) {
         c.fire = C.fireWork;
+        if (!s.nightStats.cause) s.nightStats.cause = 'fire';
         this.emit('msg.fire', { level: 'danger' });
       }
     }
@@ -1274,7 +1331,7 @@ export class Sim {
       if (d <= reach + BALANCE.monsters[target.type].radius) {
         if (u.cooldown <= 0) {
           u.cooldown = def.cooldown;
-          const dmg = archer ? def.dmg * (1 + s.mods.archerDmg) : def.dmg;
+          const dmg = (archer ? def.dmg * (1 + s.mods.archerDmg) : def.dmg) * hungerMult(s);
           this.hurtMonster(target, dmg);
           this.emit(archer ? 'fx.arrow' : 'fx.hit', { pos: { x: u.x, z: u.z }, to: { x: target.x, z: target.z } });
         }
@@ -1537,7 +1594,10 @@ export class Sim {
     if (u.hp <= 0) return;
     u.hp -= dmg;
     if (u.hp > 0) return;
-    this.state.nightStats.lost++;
+    const st = this.state.nightStats;
+    st.lost++;
+    st.lostByType[u.type] = (st.lostByType[u.type] ?? 0) + 1;
+    if (!st.cause && (u.type === 'peasant' || u.type === 'builder') && this.state.phase === 'night') st.cause = 'workersCaught';
     this.emit('msg.unitLost', { params: { unit: u.type }, pos: { x: u.x, z: u.z }, level: 'warn' });
   }
 
@@ -1546,19 +1606,25 @@ export class Sim {
     this.emit('fx.structHit', { pos: { x: st.cx + 0.5, z: st.cz + 0.5 } });
     if (st.hp <= 0) {
       this.removeStruct(st);
+      this.state.nightStats.structLost++;
       this.emit('fx.structDie', { pos: { x: st.cx + 0.5, z: st.cz + 0.5 } });
     }
   }
 
   private hurtCastle(dmg: number, m: Monster): void {
-    const c = this.state.castle;
+    const s = this.state;
+    const c = s.castle;
+    const st = s.nightStats;
     if (m.type !== 'ranged') c.wheelHp = Math.max(0, c.wheelHp - dmg * C.wheelDamageShare);
     if (c.wallHp > 0) {
       const absorbed = Math.min(c.wallHp, dmg);
       c.wallHp -= absorbed;
+      st.wallDamage += absorbed;
       dmg -= absorbed;
+      if (c.wallHp <= 0 && !st.cause.startsWith('breach')) st.cause = `breach:${dirOf(m.x - c.x, m.z - c.z)}`;
     }
     c.coreHp -= dmg;
+    st.coreDamage += dmg;
     this.emit('fx.castleHit', { pos: { x: m.x, z: m.z } });
   }
 
@@ -1602,7 +1668,7 @@ export class Sim {
     const s = this.state;
     const d = toCastle ? distToCastle(s, u.x, u.z) : Math.hypot(x - u.x, z - u.z);
     if (d <= near) return true;
-    const speed = U[u.type].speed;
+    const speed = U[u.type].speed * hungerMult(s);
     const direct = Math.hypot(x - u.x, z - u.z);
     if (direct < 2.5 || toCastle && d < 1.5) {
       this.moveDirect(u, x, z, speed, true);
@@ -1680,6 +1746,11 @@ export class Sim {
       }
     }
   }
+}
+
+/** Compass side of an offset from the castle (north is -z). */
+export function dirOf(dx: number, dz: number): Dir {
+  return Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? 'E' : 'W') : dz > 0 ? 'S' : 'N';
 }
 
 export function groupCounts(s: GameState): Record<UnitType, number> {

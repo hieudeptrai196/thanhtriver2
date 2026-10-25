@@ -6,8 +6,23 @@ const CARD_PRIORITY: CardId[] = ['wallHp', 'soldierHp', 'towerRate', 'archerDmg'
 const ROOM_PLAN: RoomType[] = ['house', 'workshop', 'barracks', 'watchtower', 'house', 'range', 'watchtower', 'house', 'barracks', 'house', 'watchtower', 'house'];
 const WANT = { peasant: 6, builder: 2, spear: 10, archer: 8 };
 
-/** A simple headless commander used by `npm run sim` and the balance tests. */
-export function botCommands(sim: Sim): Command[] {
+/**
+ * Bot policies from GDD v1.2 §16: Hold camps as long as the land feeds it, Nomad moves every dawn,
+ * Tactical weighs reserves against how well the enemy knows the camp.
+ */
+export type BotPolicy = 'hold' | 'nomad' | 'tactical';
+export const BOT_POLICIES: BotPolicy[] = ['hold', 'nomad', 'tactical'];
+
+function wantsToMove(sim: Sim, policy: BotPolicy): boolean {
+  const s = sim.state;
+  const stay = s.routes[0];
+  if (policy === 'nomad') return true;
+  if (policy === 'hold') return stay.resourcePct < 0.12;
+  return stay.resourcePct < 0.4 || s.castle.nightsHere >= 3;
+}
+
+/** A simple headless commander used by `npm run sim`, the balance tests and the in-game AI player. */
+export function botCommands(sim: Sim, policy: BotPolicy = 'tactical'): Command[] {
   const s = sim.state;
   const out: Command[] = [];
   if (s.phase === 'dawn') {
@@ -18,8 +33,8 @@ export function botCommands(sim: Sim): Command[] {
     if (!s.routePicked) {
       const stay = s.routes[0];
       const ahead = s.routes.slice(1).sort((a, b) => a.danger - b.danger || a.dirs - b.dirs)[0];
-      const move = stay.resourcePct < 0.45 || s.castle.nightsHere >= 2;
-      out.push({ t: 'pickRoute', id: move && ahead ? ahead.id : 0 });
+      const move = wantsToMove(sim, policy);
+      out.push({ t: 'pickRoute', id: move && ahead ? ahead.id : stay.id });
     }
     return out;
   }
@@ -81,14 +96,37 @@ export function botCommands(sim: Sim): Command[] {
   return out;
 }
 
-export function runBot(seed: number, maxNights = 30, maxTicks = 60 * 60 * 120): { nights: number; kills: number; ticks: number } {
+export interface BotRun {
+  seed: number;
+  policy: BotPolicy;
+  nights: number;
+  kills: number;
+  ticks: number;
+  stays: number;
+  moves: number;
+  cause: string;
+  hash: string;
+}
+
+export function runBot(seed: number, maxNights = 30, policy: BotPolicy = 'tactical', maxTicks = 60 * 60 * 150): BotRun {
   const sim = Sim.create(seed);
   let ticks = 0;
   while (sim.state.phase !== 'gameover' && sim.state.night <= maxNights && ticks < maxTicks) {
-    sim.apply(botCommands(sim));
+    sim.apply(botCommands(sim, policy));
     sim.step();
     sim.drainEvents();
     ticks++;
   }
-  return { nights: sim.state.stats.nightsSurvived, kills: sim.state.stats.kills, ticks };
+  const h = sim.state.history;
+  return {
+    seed,
+    policy,
+    nights: sim.state.stats.nightsSurvived,
+    kills: sim.state.stats.kills,
+    ticks,
+    stays: h.filter((r) => r.route === 'stay').length,
+    moves: h.filter((r) => r.route === 'move').length,
+    cause: sim.state.phase === 'gameover' ? sim.state.nightStats.cause || 'overrun' : 'alive',
+    hash: sim.hash(),
+  };
 }

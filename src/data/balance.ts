@@ -29,12 +29,11 @@ export const BALANCE = {
   tickRate: 60,
 
   phases: {
-    // Linear interpolation from night 1 to night `rampNights`.
-    dayStart: 150,
-    dayEnd: 90,
-    dusk: 20,
-    nightStart: 90,
-    nightEnd: 150,
+    // GDD v1.2 pacing in three stages: nights 1–2, 3–6, 7+.
+    stageFrom: [1, 3, 7],
+    day: [150, 165, 180],
+    dusk: [20, 25, 30],
+    night: [100, 130, 150],
     rampNights: 10,
     waveRest: 12,
     wavesEarly: 2, // nights < wavesThreeFrom
@@ -56,6 +55,8 @@ export const BALANCE = {
       { from: 7, dirs: 4 },
     ],
     stayExtraDirs: 1,
+    awarenessPerNight: 0.12, // extra monsters per night camped beyond the second at the same spot
+    campRadius: 8, // stopping within this distance of last night's spot counts as the same camp
     newRegionMaxDirs: 2,
     rangedFrom: 3,
     bossEvery: 5,
@@ -74,8 +75,7 @@ export const BALANCE = {
     keepChunksBehind: 1,
     genChunksAhead: 3,
     richnessPerChunk: 0.06,
-    regrowPerDawn: 0.05,
-    regrowMaxNightsHere: 2, // after this many nights in one place the land is exhausted: no more regrowth
+    // Reserves are finite and never regrow: a camp runs dry by how much is taken, not by a clock.
     exhaustedPct: 0.25, // below this share left, dawn warns that the area is running dry
     // Resource nodes per chunk by terrain.
     nodes: {
@@ -127,7 +127,9 @@ export const BALANCE = {
   },
   startUnits: { peasant: 4, builder: 1, spear: 3, archer: 0 } as Record<UnitType, number>,
   foodPerUnit: 1,
-  hungerDamage: 0.3, // fraction of max hp lost at dawn when food runs out
+  // Hunger (GDD v1.2): no sudden HP loss. A short dawn weakens everyone; a second one in a row also
+  // makes one villager leave. Eating fully at dawn clears it.
+  hunger: { weak: 0.8, starving: 0.6, desertFrom: 2 },
   unitRadius: 0.4,
 
   monsters: {

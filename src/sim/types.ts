@@ -124,6 +124,11 @@ export interface NightStats {
   gold: number;
   food: number;
   hungry: boolean;
+  structLost: number;
+  wallDamage: number;
+  coreDamage: number;
+  cause: string; // first serious failure of the night (message key), '' if none
+  lostByType: Record<string, number>;
 }
 
 export interface GameState {
@@ -177,8 +182,26 @@ export interface GameState {
   stats: { kills: number; bosses: number; nightsSurvived: number };
   nightStats: NightStats;
   strangerDone: boolean;
+  hunger: number; // dawns in a row without enough food
+  history: NightRecord[];
   fireDone: boolean;
   newRegion: boolean;
+}
+
+export interface NightRecord {
+  night: number;
+  route: 'stay' | 'move' | 'start';
+  terrain: string;
+  dirs: number;
+  monsters: number;
+  kills: number;
+  lost: number;
+  structLost: number;
+  wallDamage: number;
+  coreDamage: number;
+  food: number;
+  hungry: boolean;
+  cause: string; // what broke first: msg key of the first serious event, or ''
 }
 
 export type Command =

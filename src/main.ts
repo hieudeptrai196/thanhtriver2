@@ -12,12 +12,15 @@ import { addScore, clearSave, loadSave, loadScores, writeSave } from './ui/stora
 initLang();
 const params = new URLSearchParams(location.search);
 const showFps = params.get('fps') === '1';
+// ?shadows=0 turns sun shadows off from the start.
+const noShadows = params.get('shadows') === '0';
 // Debug: ?speed=4 runs the simulation faster.
 const speed = Math.max(1, Math.min(16, Number(params.get('speed') ?? 1) || 1));
 const app = document.getElementById('app')!;
 const canvas = document.getElementById('scene') as HTMLCanvasElement;
 const renderer = new GameRenderer(canvas);
 renderer.loadModels();
+if (noShadows) renderer.setShadows(false);
 if (import.meta.env.DEV) (window as unknown as { renderer: GameRenderer }).renderer = renderer;
 const audio = new Audio();
 
@@ -252,7 +255,11 @@ function loop(now: number): void {
   // Adaptive resolution: drop pixel ratio when frames are slow.
   if (fpsAvg < 40) slowTime += dt;
   else slowTime = Math.max(0, slowTime - dt * 0.5);
-  if (slowTime > 2 && renderer.pixelRatio > 0.75) {
+  if (slowTime > 2 && renderer.shadows) {
+    // Shadows go first, then resolution.
+    renderer.setShadows(false);
+    slowTime = 0;
+  } else if (slowTime > 2 && renderer.pixelRatio > 0.75) {
     renderer.pixelRatio = Math.max(0.75, renderer.pixelRatio - 0.25);
     slowTime = 0;
     resize();
