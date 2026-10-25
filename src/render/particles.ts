@@ -233,6 +233,7 @@ export class Particles {
 
   /** Chimney or fire smoke. */
   smoke(x: number, y: number, z: number, vx: number, dark: boolean, big = 1): void {
-    this.soft.add({ x, y, z, vx, vy: 1.0 + Math.random() * 0.5, vz: (Math.random() - 0.5) * 0.3, life: 2.6, size: 0.5 * big, grow: 1.6 * big, color: dark ? 0x2e2c30 : 0xa8a49e, alpha: dark ? 0.7 : 0.45, drag: 0.15 });
+    // Thin and rising fast enough that it never hides the castle it comes from.
+    this.soft.add({ x, y, z, vx, vy: 1.5 + Math.random() * 0.6, vz: (Math.random() - 0.5) * 0.3, life: 2.2, size: 0.45 * big, grow: 1.1 * big, color: dark ? 0x3a3438 : 0xa8a49e, alpha: dark ? 0.38 : 0.4, drag: 0.15 });
   }
 }

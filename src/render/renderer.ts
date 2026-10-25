@@ -911,7 +911,7 @@ export class GameRenderer {
       for (let i = 0; i < 3; i++) {
         this.fxp.flame(c.x + (Math.random() - 0.5) * 1.6, this.keepTop - 1.4 + Math.random(), c.z + (Math.random() - 0.5) * 1.6, 2.2);
       }
-      if (Math.random() < 0.35) this.fxp.smoke(c.x, this.keepTop, c.z, 0.3, true, 1.6);
+      if (Math.random() < 0.25) this.fxp.smoke(c.x, this.keepTop + 0.5, c.z, 0.6, true, 1.1);
     }
     for (const l of this.lanterns) (l.material as THREE.MeshBasicMaterial).color.setHex(n > 0.3 ? 0xffe0a0 : 0xb08a3a).multiplyScalar(n > 0.3 ? 2.4 : 1);
     // The cone only stands in for the flame particles on the code-built fallback castle.

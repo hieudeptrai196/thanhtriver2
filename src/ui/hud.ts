@@ -54,6 +54,13 @@ export function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, 
   return e;
 }
 
+/** Write text only when it changed (compared with what was last written, not the DOM, which holds icons). */
+function setText(e: HTMLElement, text: string): void {
+  if (e.dataset.t === text) return;
+  e.dataset.t = text;
+  e.textContent = text;
+}
+
 export function costText(cost: Cost): string {
   return (Object.keys(cost) as Res[]).map((r) => `${RES_ICON[r]}${cost[r]}`).join(' ');
 }
@@ -177,12 +184,15 @@ export class Hud {
       groups.appendChild(b);
     });
     const actions = el('div', 'actions');
+    // Skills stand in their own column at the right edge, above the action bar.
+    const skillBar = el('div', 'skill-bar');
     for (const id of SKILLS) {
       const b = el('button', 'btn skill');
       b.onclick = () => this.useSkill(id);
       this.skillBtns[id] = b;
-      actions.appendChild(b);
+      skillBar.appendChild(b);
     }
+    this.root.appendChild(skillBar);
     const buildBtn = el('button', 'btn');
     setLabel(buildBtn, '⚒', t('hud.build'));
     buildBtn.onclick = () => this.toggleBuild();
@@ -343,42 +353,42 @@ export class Hud {
     this.sim = sim;
     const s = sim.state;
     const c = s.castle;
-    this.topNight.textContent = t('hud.night', { n: s.night });
+    setText(this.topNight, t('hud.night', { n: s.night }));
     const remain = s.phaseLength - s.phaseTime;
-    this.topPhase.textContent = `${t(`phase.${s.phase}` as MessageKey)}${s.phase === 'day' || s.phase === 'dusk' || s.phase === 'night' ? ' · ' + fmtTime(remain) : ''}`;
+    setText(this.topPhase, `${t(`phase.${s.phase}` as MessageKey)}${s.phase === 'day' || s.phase === 'dusk' || s.phase === 'night' ? ' · ' + fmtTime(remain) : ''}`);
     this.topPhase.className = `tb-phase ${s.phase}`;
-    for (const r of ['wood', 'stone', 'food', 'gold'] as Res[]) this.resEls[r].textContent = `${RES_ICON[r]} ${Math.floor(s.res[r])}`;
-    this.popEl.textContent = `👥 ${s.units.length}/${popCap(s)}`;
+    for (const r of ['wood', 'stone', 'food', 'gold'] as Res[]) setText(this.resEls[r], `${RES_ICON[r]} ${Math.floor(s.res[r])}`);
+    setText(this.popEl, `👥 ${s.units.length}/${popCap(s)}`);
     // Food forecast: how many dawns the stock still covers (GDD v1.2 §6.5).
     const dawns = foodDawns(s);
     const foodTxt = dawns >= 9 ? '☀✓' : `☀${dawns}`;
-    if (this.foodEl.textContent !== foodTxt) this.foodEl.textContent = foodTxt;
+    setText(this.foodEl, foodTxt);
     this.foodEl.classList.toggle('bad', dawns < 2);
     this.foodEl.title = t('eco.foodNeed', { need: s.units.length * BALANCE.foodPerUnit });
     const core = c.coreHp / c.coreMax;
     this.coreBar.style.width = `${core * 100}%`;
     this.coreBar.classList.toggle('low', core < BALANCE.warnings.coreLow);
-    this.coreTxt.textContent = `❤ ${Math.ceil(c.coreHp)}`;
+    setText(this.coreTxt, `❤ ${Math.ceil(c.coreHp)}`);
     this.coreTxt.parentElement!.title = t('hud.core');
     this.wallBar.style.width = `${(c.wallHp / c.wallMax) * 100}%`;
     this.wallBar.classList.toggle('low', c.wallHp / c.wallMax < BALANCE.warnings.wallLow);
-    this.wallTxt.textContent = `🧱 ${Math.ceil(c.wallHp)}`;
+    setText(this.wallTxt, `🧱 ${Math.ceil(c.wallHp)}`);
     this.wallTxt.parentElement!.title = t('hud.wall');
     const wheelBroken = c.wheelHp <= 0;
-    this.wheelEl.textContent = wheelBroken ? '⚙✕' : `⚙ ${Math.round((c.wheelHp / c.wheelMax) * 100)}%`;
+    setText(this.wheelEl, wheelBroken ? '⚙✕' : `⚙ ${Math.round((c.wheelHp / c.wheelMax) * 100)}%`);
     this.wheelEl.title = wheelBroken ? t('hud.wheelBroken') : t('hud.wheel');
     this.wheelEl.classList.toggle('bad', wheelBroken);
     // Castle load (GDD v1.2 §5.2): light / heavy / very heavy / overloaded.
     const lv = loadLevel(s);
     const loadTxt = lv === 'light' ? '⚖' : `⚖ ${t(`load.${lv}` as MessageKey)}`;
-    if (this.loadEl.textContent !== loadTxt) this.loadEl.textContent = loadTxt;
+    setText(this.loadEl, loadTxt);
     this.loadEl.className = `tb-load ${lv}`;
     this.loadEl.title = `${t(`load.${lv}` as MessageKey)} · ${t('load.help', { load: Math.round(castleLoad(s)), cap: Math.round(loadCapacity(s)), store: storageCap(s) })}`;
     this.dumpBtn.style.display = lv === 'overloaded' && s.phase === 'day' ? '' : 'none';
     const spd = `x${this.ctl.speed}`;
-    if (this.speedBtn.textContent !== spd) this.speedBtn.textContent = spd;
+    setText(this.speedBtn, spd);
     this.speedBtn.classList.toggle('on', this.ctl.speed > 1);
-    this.pauseBtn.textContent = this.ctl.paused ? '▶' : '⏸';
+    setText(this.pauseBtn, this.ctl.paused ? '▶' : '⏸');
     this.pauseBtn.title = this.ctl.paused ? t('hud.resume') : t('hud.pause');
     this.pauseBanner.classList.toggle('show', this.ctl.paused);
     setLabel(this.autoBtn, '🤖', t('hud.auto'), this.ctl.auto ? '✓' : '');
@@ -394,12 +404,12 @@ export class Hud {
     if (!picked.length && groupSoldier) {
       const type = UNIT_TYPES[s.selected];
       const txt = `${UNIT_ICON[type]}${groupCounts(s)[type]}`;
-      if (this.pickText.textContent !== txt) this.pickText.textContent = txt;
+      setText(this.pickText, txt);
     }
     if (picked.length) {
       const by = UNIT_TYPES.map((type) => [type, picked.filter((u) => u.type === type).length] as const).filter(([, n]) => n > 0);
       const txt = by.map(([type, n]) => `${UNIT_ICON[type]}${n}`).join(' ');
-      if (this.pickText.textContent !== txt) this.pickText.textContent = txt;
+      setText(this.pickText, txt);
     }
 
     // Squad strip and the tactical order bar.
@@ -439,7 +449,9 @@ export class Hud {
     }
     const canRun = s.phase === 'day' && Math.abs(c.destX - c.x) > 0.5 && !wheelBroken;
     const runTxt = c.moving ? `■ ${t('hud.stop')}` : `▶ ${t('hud.run')}`;
-    if (this.runBtn.textContent !== runTxt) this.runBtn.textContent = runTxt;
+    setText(this.runBtn, runTxt);
+    const runTip = c.moving ? t('hud.stop') : t('hud.run');
+    if (this.runBtn.title !== runTip) this.runBtn.title = runTip;
     this.runBtn.disabled = !c.moving && !canRun;
     this.runBtn.classList.toggle('pulse', canRun && !c.moving);
 
@@ -453,7 +465,7 @@ export class Hud {
     else if (c.moving) hint = `⏱ ${Math.ceil(Math.abs(c.destX - c.x) / Math.max(0.01, travelSpeed(s)))}s`;
     else if (c.fire > 0) hint = `🔥 ${t('hud.fire')}`;
     else if (s.phase === 'night' && s.plan && s.monsters.length === 0 && s.plan.waves.some((w) => w.spawned < w.count)) hint = t('hud.rest');
-    if (this.hint.textContent !== hint) this.hint.textContent = hint;
+    setText(this.hint, hint);
     this.hint.classList.toggle('show', hint !== '');
 
     this.updateArrows(sim, renderer, w, h);

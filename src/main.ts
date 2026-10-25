@@ -1,6 +1,7 @@
 import '@fontsource/alegreya-sc/700.css';
 import './style.css';
 import { Audio } from './audio/audio';
+import { installIcons } from './ui/icons';
 import { getLang, initLang, setLang, t, type MessageKey } from './i18n';
 import { Input } from './input/input';
 import { GameRenderer } from './render/renderer';
@@ -19,6 +20,8 @@ const noShadows = params.get('shadows') === '0';
 // Debug: ?speed=4 runs the simulation faster (the in-game button switches x1/x2 on top of it).
 const debugSpeed = Math.max(1, Math.min(16, Number(params.get('speed') ?? 1) || 1));
 const app = document.getElementById('app')!;
+// Hand-drawn SVG icons replace the emoji tokens everywhere in the interface.
+installIcons(app);
 const canvas = document.getElementById('scene') as HTMLCanvasElement;
 const renderer = new GameRenderer(canvas);
 const modelsReady = renderer.loadModels();

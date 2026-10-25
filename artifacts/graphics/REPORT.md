@@ -62,3 +62,48 @@ render pipeline, look parameters, shadow casters, zoom-tilt camera, scaffold sit
 `src/render/terrain.ts`, `src/render/grass.ts` (PBR, low-tier density).
 
 Captures: `before-*.jpg`, `after-*.jpg`, `s2-*-close.jpg`, `compare-before-after.jpg` in this folder.
+
+---
+
+# UI pass (threejs-game-ui-designer)
+
+**Intent.** The HUD carries the world's art direction: dark timber panels with brass inlay and corner rivets, chamfered
+plate buttons, iron-framed meters with tick marks, a green swallow-tail pennant for setting off, and a hand-drawn SVG
+icon set (68 icons, `src/ui/icons.ts`) in place of every emoji. Hierarchy: castle survival (keep and wall meters, wheel,
+load) → night/phase and timer → resources and population → event banners → actions. Object icons are inked and
+coloured like woodcuts; control glyphs follow the text colour.
+
+**How it is wired.** The HUD keeps writing short tokens; `installIcons` swaps each token for its icon as text reaches the
+DOM (one sprite, `<use>` references), so game logic and tests are untouched. HUD text writes go through `setText`, which
+compares with the last written value (not the DOM), so icons are not rebuilt every frame.
+
+**Layout change.** Skills moved out of the action bar into their own rack at the right edge (two columns on short
+screens, stepping above the order bar while troops are selected). On screens narrower than 1000 px the set-off pennant
+shows only its play/stop mark, with the name in the tooltip.
+
+**States checked** (desktop pane 909×799 and phone landscape 812×375): active day and night play, rooms panel, build
+panel, economy panel, dawn report with doctrine cards, pause, danger banners, troop selection with the order bar, and the
+longest case (all five skills unlocked, overload warning shown, four-digit resources).
+
+**Text fit, overlap, touch targets** (measured in the page):
+- No emoji left in the interface (text-node scan: 0; 92 SVG icons on the gameplay screen).
+- Phone landscape: 23 buttons, none under 40 px, none off-screen, no clipped text; top bar 56 px (73–79 px with
+  four-digit resources and the overload warning).
+- Longest case: action bar right edge 903 px of 909 and 806 px of 812; skill rack between the top bar and the bottom
+  bars; order bar and skill rack no longer overlap (fixed in this pass).
+- Fixed in this pass: top bar wrapping to three rows on narrow screens; set-off button cut off at the right edge when
+  extra skills appear; roof-fire smoke growing into a dark disc that hid the castle.
+
+**Remaining risks.** Event banners can sit over the north direction marker when the castle is near the top of the view.
+Native tooltips (`title`) still show plain text. The icon set is hand-made SVG of modest detail; painted icon art would
+need an image service.
+
+## Scorecard after the UI pass
+
+| Category | Graphics pass | UI pass | Evidence |
+| --- | --- | --- | --- |
+| UI/HUD | 1.5 | 2 | genre-specific frames and meters, consistent icon language, states and responsive fit measured above |
+| (others) | as above | unchanged | |
+
+Average 1.9 → 1.95. Premium still needs Interactables ≥ 2 (resource node depletion states and silhouettes at the
+gameplay zoom) and an average of 2.3.

@@ -993,3 +993,338 @@ body {
     top: 58px;
   }
 }
+
+/* ================================================================ authored medieval frames
+   Dark timber panels with brass trim and corner rivets, chamfered plate buttons, iron-framed meters with ticks,
+   and the hand-drawn SVG icon set (src/ui/icons.ts) in place of emoji. */
+
+:root {
+  --ink: #170e07;
+  --wood-hi: #5d4029;
+  --wood-lo: #2f1f13;
+  --brass: #c9a25a;
+  --brass-dim: rgba(201, 162, 90, 0.55);
+  --rivet: radial-gradient(circle, #f0d48a 0 1.3px, #8a6526 1.9px, #24160b 2.5px, transparent 3px);
+  --chamfer: polygon(4px 0, calc(100% - 4px) 0, 100% 4px, 100% calc(100% - 4px), calc(100% - 4px) 100%, 4px 100%, 0 calc(100% - 4px), 0 4px);
+}
+
+.gi {
+  width: 1.3em;
+  height: 1.3em;
+  vertical-align: -0.3em;
+  flex: none;
+  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.45));
+}
+
+/* Panels: timber with plank seams, ink border, brass inlay, a rivet in each corner. */
+.topbar,
+.groups,
+.actions,
+.squad-bar,
+.pick-bar,
+.panel,
+.plan-banner {
+  background:
+    var(--rivet) left 3px top 3px / 8px 8px no-repeat,
+    var(--rivet) right 3px top 3px / 8px 8px no-repeat,
+    var(--rivet) left 3px bottom 3px / 8px 8px no-repeat,
+    var(--rivet) right 3px bottom 3px / 8px 8px no-repeat,
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.13) 0 1px, transparent 1px 58px),
+    repeating-linear-gradient(0deg, rgba(255, 220, 160, 0.025) 0 2px, transparent 2px 5px),
+    linear-gradient(var(--wood-hi), var(--wood-lo));
+  border: 2px solid var(--ink);
+  border-radius: 5px;
+  box-shadow: inset 0 0 0 1px var(--brass-dim), inset 0 0 0 3px rgba(0, 0, 0, 0.3), 0 6px 16px rgba(0, 0, 0, 0.45);
+}
+.topbar {
+  padding: 4px 12px;
+}
+.groups,
+.actions {
+  padding: 7px 9px;
+}
+
+/* Buttons: chamfered plates with a brass inlay; hover lifts, press sinks, "on" glows gold. */
+.btn {
+  border: none;
+  border-radius: 0;
+  clip-path: var(--chamfer);
+  background: linear-gradient(#6c4b30, #3d2a1b);
+  box-shadow: inset 0 0 0 1.5px var(--ink), inset 0 0 0 2.5px var(--brass-dim), inset 0 3px 0 rgba(255, 225, 170, 0.16), inset 0 -3px 0 rgba(0, 0, 0, 0.32);
+  color: #f3e6c8;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
+  transition: filter 0.1s, transform 0.05s;
+}
+.btn:hover:not(:disabled) {
+  background: linear-gradient(#80593a, #4a3321);
+  filter: brightness(1.08);
+}
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: inset 0 0 0 1.5px var(--ink), inset 0 0 0 2.5px var(--brass-dim), inset 0 3px 6px rgba(0, 0, 0, 0.5);
+}
+.btn:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px var(--ink), inset 0 0 0 3px #f0d48a, inset 0 3px 0 rgba(255, 225, 170, 0.16);
+}
+.btn:disabled {
+  opacity: 1;
+  filter: grayscale(0.7) brightness(0.62);
+}
+.btn.on {
+  background: linear-gradient(#a07a30, #5e4518);
+  box-shadow: inset 0 0 0 1.5px var(--ink), inset 0 0 0 2.5px #f0d48a, inset 0 0 12px rgba(255, 210, 110, 0.45);
+}
+.btn .ic .gi {
+  width: 22px;
+  height: 22px;
+  vertical-align: -6px;
+}
+.btn.small .ic .gi,
+.btn.small > .gi {
+  width: 20px;
+  height: 20px;
+}
+.btn.group .ex {
+  color: #f0d48a;
+  font-weight: 800;
+}
+
+/* Skills: iron plates; the cooldown fills along the bottom in gold. */
+.btn.skill {
+  background: linear-gradient(#55565e, #2c2d33);
+}
+.btn.skill::after {
+  height: 3px;
+  background: linear-gradient(90deg, #f0d48a, #c9962e);
+}
+
+/* Set off: a green campaign pennant with a swallow-tail. */
+.btn.run {
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 0 100%);
+  background: linear-gradient(#6f9236, #3e5a1c);
+  box-shadow: inset 0 0 0 1.5px var(--ink), inset 0 0 0 2.5px rgba(240, 212, 138, 0.7), inset 0 3px 0 rgba(255, 255, 210, 0.2);
+  padding-right: 20px;
+  font-family: var(--title);
+  letter-spacing: 0.5px;
+}
+.btn.run:hover:not(:disabled) {
+  background: linear-gradient(#80a63e, #4a6a22);
+}
+.btn.auto.on {
+  background: linear-gradient(#2f6aa0, #1c3f63);
+  box-shadow: inset 0 0 0 1.5px var(--ink), inset 0 0 0 2.5px #9cc6ee, inset 0 0 12px rgba(140, 200, 255, 0.45);
+}
+
+/* Resource slots: icon + fixed-width numerals in an inset well. */
+.tb-res {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 66px;
+  padding: 2px 8px 2px 4px;
+  background: rgba(0, 0, 0, 0.28);
+  border-radius: 3px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6), 0 1px 0 rgba(255, 220, 160, 0.1);
+  color: #f6ebd0;
+  font-variant-numeric: tabular-nums;
+}
+.tb-res .gi {
+  width: 20px;
+  height: 20px;
+  vertical-align: 0;
+}
+
+/* Meters: iron frame, dark well, tick marks every tenth, a highlight along the top. */
+.bar {
+  height: 24px;
+  border: 2px solid var(--ink);
+  border-radius: 3px;
+  background: linear-gradient(#140d08, #2a1d14);
+  box-shadow: inset 0 0 0 1px var(--brass-dim), 0 1px 0 rgba(255, 220, 160, 0.12);
+}
+.bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(90deg, transparent 0 calc(10% - 1px), rgba(0, 0, 0, 0.4) calc(10% - 1px) 10%);
+  pointer-events: none;
+}
+.bar-fill {
+  background: linear-gradient(#e86a4a 0%, #b8321e 55%, #7e1c10 100%);
+  box-shadow: inset 0 2px 0 rgba(255, 200, 170, 0.35);
+}
+.bar-fill.wall {
+  background: linear-gradient(#c4b89c 0%, #8c806a 55%, #5e5444 100%);
+}
+.bar span {
+  z-index: 1;
+  gap: 4px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: #fff4dc;
+}
+.bar span .gi {
+  width: 17px;
+  height: 17px;
+  vertical-align: 0;
+}
+.tb-wheel .gi,
+.tb-load .gi,
+.tb-food .gi {
+  width: 16px;
+  height: 16px;
+}
+
+/* Toasts and banners: dark strips with brass edges; danger is a notched red banner. */
+.toast {
+  border-radius: 3px;
+  background: linear-gradient(#3a281a, #24170e);
+  border: 1px solid var(--brass-dim);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.45);
+}
+.toast.danger {
+  clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 10px 100%, 0 50%);
+  background: linear-gradient(#a8301f, #6e1a10);
+  border: none;
+  padding: 4px 20px;
+}
+.pause-banner {
+  clip-path: polygon(14px 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 14px 100%, 0 50%);
+  border: none;
+  background: linear-gradient(#5d4029, #2f1f13);
+  padding: 8px 30px;
+  color: #f0d48a;
+}
+
+/* Menus and modals: the same timber and brass. */
+.menu-box,
+.modal-box {
+  background:
+    var(--rivet) left 5px top 5px / 10px 10px no-repeat,
+    var(--rivet) right 5px top 5px / 10px 10px no-repeat,
+    var(--rivet) left 5px bottom 5px / 10px 10px no-repeat,
+    var(--rivet) right 5px bottom 5px / 10px 10px no-repeat,
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.12) 0 1px, transparent 1px 64px),
+    linear-gradient(var(--wood-hi), var(--wood-lo));
+}
+.card {
+  border-radius: 3px;
+  clip-path: var(--chamfer);
+}
+
+@media (max-height: 520px), (max-width: 900px) {
+  .tb-res {
+    min-width: 54px;
+    padding: 1px 6px 1px 3px;
+  }
+  .tb-res .gi {
+    width: 17px;
+    height: 17px;
+  }
+  .btn .ic .gi {
+    width: 19px;
+    height: 19px;
+  }
+}
+
+/* Narrow screens: the resource wells shrink to their numbers so the top bar keeps two rows,
+   and the action bar keeps the set-off pennant on screen. */
+@media (max-width: 1100px) {
+  .tb-res {
+    min-width: 0;
+    padding: 0 6px 0 2px;
+    gap: 3px;
+  }
+  .tb-resources {
+    gap: 5px 6px;
+  }
+  .groups,
+  .actions {
+    padding: 5px 6px;
+    gap: 4px;
+  }
+  .btn.run {
+    min-width: 76px;
+    padding-left: 10px;
+    padding-right: 16px;
+  }
+}
+.room-cell .gi {
+  width: 24px;
+  height: 24px;
+}
+.room-cell.locked .gi {
+  opacity: 0.75;
+}
+/* Narrow screens: the set-off pennant keeps only its play/stop mark (the name is in the tooltip),
+   so the action bar fits even with every skill unlocked. */
+@media (max-width: 1000px) {
+  .btn.run {
+    font-size: 0;
+    min-width: 58px;
+    padding: 0 20px 0 14px;
+  }
+  .btn.run .gi {
+    width: 22px;
+    height: 22px;
+    vertical-align: -5px;
+  }
+}
+
+/* Skill column: a riveted rack at the right edge, above the action bar. On short screens it folds into two
+   columns growing leftwards so it never reaches the top bar. */
+.skill-bar {
+  position: absolute;
+  right: max(6px, env(safe-area-inset-right));
+  bottom: var(--bb, 72px);
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(5, auto);
+  direction: rtl;
+  gap: 5px;
+  padding: 6px;
+  background:
+    var(--rivet) left 2px top 2px / 8px 8px no-repeat,
+    var(--rivet) right 2px top 2px / 8px 8px no-repeat,
+    var(--rivet) left 2px bottom 2px / 8px 8px no-repeat,
+    var(--rivet) right 2px bottom 2px / 8px 8px no-repeat,
+    linear-gradient(var(--wood-hi), var(--wood-lo));
+  border: 2px solid var(--ink);
+  border-radius: 5px;
+  box-shadow: inset 0 0 0 1px var(--brass-dim), 0 6px 16px rgba(0, 0, 0, 0.45);
+}
+.skill-bar:not(:has(.btn:not([style*='none']))) {
+  display: none;
+}
+.skill-bar .btn {
+  direction: ltr;
+  min-width: 52px;
+  min-height: 46px;
+  padding: 0 6px;
+}
+.skill-bar .btn .nm {
+  display: none;
+}
+.skill-bar .btn .ic {
+  margin-right: 0;
+}
+.skill-bar .btn .ex {
+  margin-left: 3px;
+  font-size: 11px;
+}
+@media (max-height: 520px) {
+  .skill-bar {
+    grid-template-rows: repeat(3, auto);
+    gap: 4px;
+    padding: 4px;
+  }
+  .skill-bar .btn {
+    min-width: 46px;
+    min-height: 40px;
+  }
+}
+/* While troops are selected the order bar floats above the bottom bar: the skill column steps up over it. */
+.hud.picking .skill-bar {
+  bottom: calc(var(--bb, 72px) + 62px);
+}
