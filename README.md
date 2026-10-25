@@ -55,11 +55,19 @@ Tham số URL: `?lang=en` (tiếng Anh), `?fps=1` (hiện FPS), `?seed=123` (c�
 | Tạm dừng (vẫn ra lệnh được) | P / Esc | Nút ⏸ |
 | AI chơi thay (bot trình diễn) | O | Nút 🤖 |
 
+Giao diện cố tình ít chữ: các thanh nút chỉ hiện biểu tượng và số, rê chuột (hoặc nhấn giữ) để xem tên, giá và giải
+thích. Thông báo chỉ hiện cho cảnh báo và mốc quan trọng.
+
 Việc nhỏ quân luôn tự lo: nông dân khai thác theo ưu tiên, thợ sửa chỗ khẩn cấp, lính tự đánh trong tầm, cung thủ
 lên sàn thành. Lệnh tay đè lên việc tự động cho tới khi bấm **Tự động lại**. **AI chơi thay** là chế độ riêng để xem.
 
 ## Đồ hoạ và ghi công
 
+- Tòa thành là một "đoàn tàu pháo đài": khung gầm, bánh tàu với thanh truyền, lưỡi gạt, đèn lồng, ống khói nhả khói
+  khi chạy.
+- Ban đêm có ánh trăng xanh; vùng sáng ấm, đuốc bập bùng có tia lửa; cháy mái là lửa và khói thật.
+- Phản hồi giao tranh: tên bay theo đường cong, mưa tên rơi xuống, trúng đòn thì chớp sáng, quân và quái ngã xuống
+  rồi chìm vào đất.
 - **KayKit** của Kay Lousberg (CC0): nhân vật, xương khô, tòa thành, tháp, tường gỗ, cây, đá, đồi núi.
 - **Nature Kit** của Kenney (CC0): cỏ, hoa, nấm, sỏi, khúc gỗ, ruộng bí ngô / lúa mì / ngô.
 - Địa hình liền mạch low-poly và đường ray dựng bằng code; bóng đổ mặt trời tự tắt khi máy yếu.
@@ -108,7 +116,11 @@ public/sw.js        Service Worker: chơi offline sau lần mở đầu
 | §7.1 Đóng cửa khẩn cấp, Dân quân, Sửa khẩn; sửa chữa tốn gỗ | Có |
 | §13 Thẻ có đánh đổi | Có (14 thẻ) |
 | §14 Hành trình / Thử thách ngắn / Vô tận | Có |
-| Q01–Q03 Hash trạng thái, log đêm, bot 3 policy, offline cache | Có |
+| Q01–Q03 Hash trạng thái, log đêm (xuất file 📥 ở màn kết thúc), bot 3 policy, offline cache | Có |
+| D01 Thẻ chọn đường: tài nguyên, số hướng, nguy hiểm, thời gian chạy, công trình bị bỏ và tỉ lệ hoàn, số sáng đủ ăn | Có |
+| §6.4 Báo nghẽn đường về kho trong bảng Kinh tế | Có |
+| §11.1 Bot Chiến thuật biết điều đội (tuyến khiên ở hướng chính lúc hoàng hôn) | Có |
+| §18 Điểm lưu lúc bình minh và hoàng hôn | Có (chưa có điểm lưu giữa các đợt, chưa dùng IndexedDB) |
 | P1 trở đi: world graph nhánh, trinh sát, nhiệm vụ ban ngày, biome mới, sắt, kỵ binh, học thuyết Quân giới, playtest có quan sát | Chưa |
 
 ## Cân bằng
@@ -121,6 +133,7 @@ gần nhau; theo GDD §16.4 đây là việc cần chỉnh tiếp bằng playtes
 
 - **Lưới phòng** 4 cột: đời 1 mở 2×2, đời 2 mở 4×2, thẻ "+1 ô" mở hàng 3. Cộng hưởng theo ô kề cạnh: Trại lính +
   Xưởng thợ, Tháp canh + Trường bắn, Bếp + Nhà dân, Kho + Xưởng thợ.
+- **Đường ray:** không được xây công trình trên nền ray (thành phải lăn qua đó).
 - **Đi tiếp:** chọn điểm dừng lúc bình minh, thành chỉ lăn khi bấm Chạy để kịp tháo công trình. Hoàng hôn tới mà chưa
   tới nơi thì dừng tại chỗ.
 - **"Ở lại"** = đêm nay đứng cách chỗ đêm trước dưới 8 ô.

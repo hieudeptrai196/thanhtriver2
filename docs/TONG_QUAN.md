@@ -184,7 +184,9 @@ Hẻm núi (ít tài nguyên, chỉ 2 hướng vào). Càng xa càng giàu và c
 
 ## 7. Đồ hoạ
 
-KayKit (Kay Lousberg) cho nhân vật, quái, thành, tháp, cây, đá, đồi núi; Kenney Nature Kit cho cỏ, hoa, nấm, ruộng;
+Tòa thành là "đoàn tàu pháo đài" (bánh tàu, thanh truyền, ống khói nhả khói khi chạy). Đêm có ánh trăng xanh, vùng
+sáng ấm, đuốc bập bùng; giao tranh có tên bay, chớp sáng khi trúng đòn, xác ngã. Giao diện cố tình ít chữ: biểu
+tượng và số, giải thích nằm trong tooltip. KayKit (Kay Lousberg) cho nhân vật, quái, thành, tháp, cây, đá, đồi núi; Kenney Nature Kit cho cỏ, hoa, nấm, ruộng;
 địa hình low-poly liền mạch, đường ray, đuốc dựng bằng code; bóng đổ mặt trời tự tắt khi máy yếu. Hoạt ảnh được
 "nướng" thành vài khung hình tĩnh để vẽ hàng loạt. Ghi công đầy đủ: [CREDITS.md](../CREDITS.md).
 
@@ -192,8 +194,9 @@ KayKit (Kay Lousberg) cho nhân vật, quái, thành, tháp, cây, đá, đồi 
 
 ## 8. Hiện trạng và việc tiếp theo
 
-**Đã có (P0 của GDD v1.2):** mọi mục ở trên, cộng hash trạng thái, log mỗi đêm (`history`), 3 bot policy, chơi
-offline (Service Worker), lưu cũ vẫn tải được, 50 test.
+**Đã có (P0 của GDD v1.2):** mọi mục ở trên, cộng hash trạng thái, log mỗi đêm (`history`, xuất file ở màn kết
+thúc), 3 bot policy (bot Chiến thuật biết dàn tuyến khiên), báo nghẽn đường về kho, điểm lưu lúc bình minh và hoàng
+hôn, chơi offline (Service Worker), lưu cũ vẫn tải được, 50 test.
 
 **Số đo gần nhất** (`npm run sim -- --seeds 8`): trung vị Bám trụ 7 đêm, Du mục 6, Chiến thuật 7. Ba lối vẫn sát
 nhau; GDD §16.4 yêu cầu chạy 100 seed mỗi policy và playtest có quan sát để chỉnh tiếp.
