@@ -253,3 +253,74 @@ export function furrowTexture(): THREE.Texture {
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
+
+function painted(g: THREE.BufferGeometry, hex: number): THREE.BufferGeometry {
+  const n = g.index ? g.toNonIndexed() : g;
+  const c = new THREE.Color(hex);
+  const col = new Float32Array(n.getAttribute('position').count * 3);
+  for (let i = 0; i < col.length; i += 3) col.set([c.r, c.g, c.b], i);
+  n.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  n.deleteAttribute('uv');
+  return n;
+}
+
+/** A domed haystack with a darker, weathered crown; vertex-coloured, about 1.3 wide and 1.2 tall. */
+export function haystackGeometry(): THREE.BufferGeometry {
+  const pts: THREE.Vector2[] = [];
+  for (let i = 0; i <= 8; i++) {
+    const t = i / 8;
+    pts.push(new THREE.Vector2(Math.max(0.02, 0.68 * Math.cos(t * Math.PI * 0.5) ** 0.6 * (1 - t * 0.12)), t * 1.15));
+  }
+  const body = new THREE.LatheGeometry(pts, 9);
+  const pos = body.getAttribute('position');
+  // Ragged straw: jitter the surface a little.
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i);
+    const k = 1 + Math.sin(i * 12.9898) * 0.06 * (y > 0.05 ? 1 : 0);
+    pos.setX(i, pos.getX(i) * k);
+    pos.setZ(i, pos.getZ(i) * k);
+  }
+  body.computeVertexNormals();
+  const n = body.toNonIndexed();
+  const p = n.getAttribute('position');
+  const col = new Float32Array(p.count * 3);
+  const lo = new THREE.Color(0xc9a95a);
+  const hi = new THREE.Color(0x8c7442);
+  const c = new THREE.Color();
+  for (let i = 0; i < p.count; i++) {
+    c.copy(lo).lerp(hi, Math.min(1, Math.max(0, (p.getY(i) - 0.6) / 0.5)));
+    col.set([c.r, c.g, c.b], i * 3);
+  }
+  n.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  n.deleteAttribute('uv');
+  const band = painted(new THREE.TorusGeometry(0.52, 0.035, 3, 10).rotateX(Math.PI / 2).translate(0, 0.62, 0), 0x6e5630);
+  return mergeGeometries([n, band])!;
+}
+
+/** A crossroads waypost: a weathered post with two arrow boards and a little roof. */
+export function signpostGeometry(): THREE.BufferGeometry {
+  const wood = 0x6b4a2c;
+  const parts = [
+    painted(new THREE.BoxGeometry(0.12, 1.7, 0.12).translate(0, 0.85, 0), wood),
+    painted(new THREE.BoxGeometry(0.75, 0.2, 0.05).translate(0.3, 1.35, 0.07), 0x9a7448),
+    painted(new THREE.BoxGeometry(0.65, 0.18, 0.05).translate(-0.25, 1.08, -0.07).rotateY(0.5), 0x8a6640),
+    painted(new THREE.ConeGeometry(0.2, 0.18, 4).rotateY(Math.PI / 4).translate(0, 1.79, 0), 0x5a3a24),
+    painted(new THREE.BoxGeometry(0.34, 0.08, 0.34).translate(0, 0.04, 0), 0x6e675b),
+  ];
+  return mergeGeometries(parts)!;
+}
+
+/** The cold remains of a camp: a ring of stones, charred logs and an ash bed. */
+export function campfireGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [painted(new THREE.CircleGeometry(0.5, 10).rotateX(-Math.PI / 2).translate(0, 0.02, 0), 0x4a4038)];
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const s = 0.12 + (Math.sin(i * 7.1) * 0.5 + 0.5) * 0.06;
+    parts.push(painted(new THREE.DodecahedronGeometry(s, 0).scale(1, 0.7, 1).translate(Math.cos(a) * 0.55, s * 0.5, Math.sin(a) * 0.55), i % 2 ? 0x7d766a : 0x928a7c));
+  }
+  for (let i = 0; i < 3; i++) {
+    const a = i * 2.1;
+    parts.push(painted(new THREE.CylinderGeometry(0.05, 0.06, 0.7, 5).rotateZ(Math.PI / 2 - 0.25).rotateY(a).translate(0, 0.12, 0), i === 1 ? 0x2a2018 : 0x3a2c20));
+  }
+  return mergeGeometries(parts)!;
+}

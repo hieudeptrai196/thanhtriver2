@@ -6,6 +6,8 @@ import { hash01 } from '../sim/rng';
 import { chunkCenter, chunkTerrain } from '../sim/world';
 import { Grass } from './grass';
 import { Particles } from './particles';
+import { Sky } from './sky';
+import { Decals, Telegraphs } from './decals';
 import { chunkLayout, Terrain, terrainHeight, trackX } from './terrain';
 import {
   castleGeometry,
@@ -14,6 +16,9 @@ import {
   monsterGeometry,
   nodeGeometry,
   scaffoldGeometry,
+  haystackGeometry,
+  signpostGeometry,
+  campfireGeometry,
   blobGeometry,
   furrowTexture,
   structGeometry,
@@ -42,11 +47,21 @@ const LANDMARKS: MedName[] = [
 ];
 // Soft corner darkening, kept off the middle of the screen where the castle and the fight are.
 const VIGNETTE = {
-  uniforms: { tDiffuse: { value: null }, uStrength: { value: 0.55 }, uSize: { value: 0.78 } },
+  uniforms: {
+    tDiffuse: { value: null },
+    uStrength: { value: 0.55 },
+    uSize: { value: 0.78 },
+    // Time-of-day grade: a warm wash from the sun's side at dusk, a cool cast at night.
+    uTint: { value: new THREE.Vector3(1, 1, 1) },
+    uTintAmt: { value: 0 },
+    uSide: { value: 0 },
+  },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-  fragmentShader: `uniform sampler2D tDiffuse; uniform float uStrength, uSize; varying vec2 vUv;
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float uStrength, uSize, uTintAmt, uSide; uniform vec3 uTint; varying vec2 vUv;
     void main(){
       vec4 c = texture2D(tDiffuse, vUv);
+      float side = clamp(0.5 + (vUv.x - 0.5) * uSide * 1.6 + (vUv.y - 0.5) * 0.5, 0.0, 1.0);
+      c.rgb = mix(c.rgb, c.rgb * uTint + uTint * 0.03, uTintAmt * (0.35 + 0.65 * side));
       float d = distance(vUv, vec2(0.5));
       c.rgb *= mix(1.0, smoothstep(uSize, uSize - 0.45, d), uStrength);
       gl_FragColor = c;
@@ -236,6 +251,18 @@ export class GameRenderer {
   private terrain: Terrain;
   private grass: Grass;
   private fxp: Particles;
+  private sky: Sky;
+  private decals: Decals;
+  private tele: Telegraphs;
+  private seed = 0;
+  // Mid-ground dressing (procedural): haystacks, wayposts and cold campfires; plus what it must keep clear of.
+  private hay: Instanced;
+  private signs: Instanced;
+  private camps: Instanced;
+  private dressNodes: { x: number; z: number }[] = [];
+  private dressStructs: { cx: number; cz: number }[] = [];
+  private sunDir = new THREE.Vector3(0, 1, 0);
+  private vignette!: ShaderPass;
   private smokeIndex = 0;
   private shake = 0;
   private decor = new Map<DecorName, Instanced>();
@@ -294,11 +321,11 @@ export class GameRenderer {
   private puffs: Instanced;
   private ghost: THREE.Mesh;
   private skillRing: THREE.Mesh;
+  private skillAim: Overlay['skillTarget'] | null = null;
   private tracer: THREE.LineSegments;
   private tracerPos: Float32Array;
   private tracerCol: Float32Array;
   private fx: Fx[] = [];
-  private fxRings: THREE.Mesh[] = [];
   private time = 0;
   private nightMix = 0;
   private ray = new THREE.Raycaster();
@@ -321,7 +348,8 @@ export class GameRenderer {
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.bloom = new UnrealBloomPass(new THREE.Vector2(512, 512), 0.5, 0.35, 0.9);
     this.composer.addPass(this.bloom);
-    this.composer.addPass(new ShaderPass(VIGNETTE));
+    this.vignette = new ShaderPass(VIGNETTE);
+    this.composer.addPass(this.vignette);
     this.composer.addPass(new OutputPass());
     this.scene.background = new THREE.Color(0xaabfc6);
     this.scene.fog = new THREE.Fog(0xaabfc6, 60, 140);
@@ -329,6 +357,9 @@ export class GameRenderer {
     this.terrain = new Terrain(this.scene);
     this.grass = new Grass(this.scene);
     this.fxp = new Particles(this.scene);
+    this.sky = new Sky(this.scene);
+    this.decals = new Decals(this.scene);
+    this.tele = new Telegraphs(this.scene);
     this.hemi = new THREE.HemisphereLight(0xf0e6d4, 0x5e4c34, 1.6);
     this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xffe4bc, 1.9);
@@ -442,6 +473,9 @@ export class GameRenderer {
     this.nodePlots.mesh.receiveShadow = true;
     for (const t of ['wall', 'tower', 'torch'] as StructType[]) this.structs[t] = new Instanced(structGeometry(t), flat(), 300, this.scene);
     // Building sites: a timber scaffold that grows with progress around the rising structure.
+    this.hay = new Instanced(haystackGeometry(), sharedStandard({ vertexColors: true, flat: true, roughness: 0.95 }), 90, this.scene, true);
+    this.signs = new Instanced(signpostGeometry(), sharedStandard({ vertexColors: true, flat: true, roughness: 0.9 }), 30, this.scene, false);
+    this.camps = new Instanced(campfireGeometry(), sharedStandard({ vertexColors: true, flat: true, roughness: 0.95 }), 30, this.scene, false);
     this.blueprint = new Instanced(scaffoldGeometry(), sharedStandard({ vertexColors: true, flat: true, roughness: 0.9 }), 300, this.scene, true);
     this.cliffs = [new Instanced(cliffGeometry(), mat, 600, this.scene)];
 
@@ -485,15 +519,6 @@ export class GameRenderer {
     this.tracer.frustumCulled = false;
     this.scene.add(this.tracer);
 
-    for (let i = 0; i < 12; i++) {
-      const g = new THREE.CircleGeometry(1, 32);
-      g.rotateX(-Math.PI / 2);
-      const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0xff3020, transparent: true, opacity: 0.3, depthWrite: false }));
-      m.visible = false;
-      m.position.y = 0.05;
-      this.scene.add(m);
-      this.fxRings.push(m);
-    }
   }
 
   private applyModels(m: Models): void {
@@ -521,7 +546,7 @@ export class GameRenderer {
     this.scenery = [m.med.pines, m.props.groveA, m.props.groveB].map((b) => new Instanced(b.geo, b.materials, 160, this.scene, false));
     this.groves = [m.props.groveA, m.props.groveB].map((b) => new Instanced(b.geo, b.materials, 120, this.scene, false));
     // Far scenery casts no shadow: it sits outside the sun's shadow box almost all the time.
-    for (const n of LANDMARKS) this.landmarks.set(n, new Instanced(m.med[n].geo, m.med[n].materials, 120, this.scene, false));
+    for (const n of LANDMARKS) this.landmarks.set(n, new Instanced(m.med[n].geo, m.med[n].materials, 200, this.scene, false));
     // Kenney Nature Kit: ground clutter (no shadows, it is small and plentiful) and crop fields for food.
     for (const [name, b] of Object.entries(m.decor) as [DecorName, Baked][]) {
       if (name === 'pumpkin' || name === 'wheat' || name === 'corn') continue;
@@ -785,6 +810,7 @@ export class GameRenderer {
           this.corpses.push({ crowd, x: p.x, z: p.z, rot: Math.random() * Math.PI * 2, t: 0, scale: type === 'boss' && crowd.hasModel ? 2.4 : 1, color: 0xb0a0a0 });
           this.fx.push({ kind: 'puff', a: p, t: 0, ttl: 0.45, r: type === 'boss' ? 3 : 0.8, color: 0x403038 });
           this.fxp.death(p.x, p.z, type === 'boss');
+          this.decals.add('bones', p.x, p.z, type === 'boss' ? 2.4 : 0.7 + Math.random() * 0.3, 18);
           if (type === 'boss') this.shake = Math.max(this.shake, 0.6);
           break;
         }
@@ -813,6 +839,7 @@ export class GameRenderer {
           this.fx.push({ kind: 'puff', a: p, t: 0, ttl: 0.4, r: 1.2, color: 0xc0a080 });
           this.fxp.chips(p.x, p.z, true);
           this.fxp.ring(p.x, p.z, 1.2);
+          this.decals.add('scorch', p.x, p.z, 1.4, 26);
           break;
         case 'fx.built':
           this.fx.push({ kind: 'puff', a: p, t: 0, ttl: 0.4, r: 1.2, color: 0xc0a080 });
@@ -833,11 +860,14 @@ export class GameRenderer {
             const to = { x: p.x + Math.cos(a) * r, z: p.z + Math.sin(a) * r };
             this.projectiles.push({ a: { x: to.x - 3, z: to.z + 2 }, b: to, t: -Math.random() * 0.3, ttl: 0.45, arc: 7, kind: 'rain' });
           }
-          this.fx.push({ kind: 'slam', a: p, t: 0, ttl: 0.6, r: BALANCE.abilities.arrowRain.radius!, color: 0xfff0a0 });
+          this.fx.push({ kind: 'slam', a: p, t: 0, ttl: 0.6, r: BALANCE.abilities.arrowRain.radius!, color: 0xffe08a });
+          this.decals.add('pocks', p.x, p.z, BALANCE.abilities.arrowRain.radius! * 0.9, 16);
           break;
         case 'fx.slam':
           this.fxp.ring(p.x, p.z, Number(e.params?.r ?? 4));
           this.shake = Math.max(this.shake, 0.45);
+          this.decals.add('cracks', p.x, p.z, Number(e.params?.r ?? 4) * 0.8, 24);
+          this.decals.add('scorch', p.x, p.z, Number(e.params?.r ?? 4) * 0.5, 24);
           this.fx.push({ kind: 'slam', a: p, t: 0, ttl: 0.5, r: Number(e.params?.r ?? BALANCE.abilities.arrowRain.radius), color: e.key === 'fx.slam' ? 0xff6030 : 0xfff0a0 });
           break;
         case 'fx.bell':
@@ -849,6 +879,9 @@ export class GameRenderer {
 
   render(sim: Sim, dt: number, overlay: Overlay): void {
     const s = sim.state;
+    this.seed = s.seed;
+    this.dressNodes = s.nodes;
+    this.dressStructs = s.structs;
     this.time += dt;
     const night = s.phase === 'night' ? 1 : s.phase === 'dusk' ? Math.min(1, s.phaseTime / s.phaseLength) * 0.6 : 0;
     this.nightMix += (night - this.nightMix) * Math.min(1, dt * 2);
@@ -860,7 +893,35 @@ export class GameRenderer {
     const dark = new THREE.Color(0x0d1a33);
     const sky = n < 0.5 ? day.clone().lerp(dusk, n * 2) : dusk.clone().lerp(dark, (n - 0.5) * 2);
     (this.scene.background as THREE.Color).copy(sky);
-    (this.scene.fog as THREE.Fog).color.copy(sky);
+    // Sun arc: up in the east in the morning, high at noon, low and orange in the west at dusk; a high moon at night.
+    let az: number;
+    let el: number;
+    if (s.phase === 'day' || s.phase === 'dawn') {
+      const p = s.phase === 'dawn' ? 0 : Math.min(1, s.phaseTime / s.phaseLength);
+      az = 0.35 + p * 2.05;
+      el = 0.55 + 0.45 * Math.sin(Math.PI * Math.min(1, p * 1.15));
+    } else if (s.phase === 'dusk') {
+      const p = Math.min(1, s.phaseTime / s.phaseLength);
+      az = 2.4 + p * 0.35;
+      el = 0.42 - p * 0.3;
+    } else {
+      az = 2.1;
+      el = 0.95;
+    }
+    const duskK = s.phase === 'dusk' ? Math.min(1, 0.4 + (s.phaseTime / s.phaseLength) * 1.2) * (1 - Math.max(0, n - 0.5) * 2) : s.phase === 'day' ? Math.max(0, (s.phaseTime / s.phaseLength - 0.82) / 0.18) * 0.5 : 0;
+    this.sunDir.set(Math.cos(az) * Math.cos(el), Math.sin(el), Math.sin(az) * Math.cos(el)).normalize();
+    this.sky.update(this.camera, duskK, Math.max(0, n - 0.5) * 2, this.sunDir);
+    (this.scene.fog as THREE.Fog).color.copy(this.sky.horizon);
+    (this.scene.background as THREE.Color).copy(this.sky.horizon);
+    const vu = this.vignette.uniforms;
+    if (n > 0.5) {
+      vu.uTint.value.set(0.82, 0.9, 1.12);
+      vu.uTintAmt.value = (n - 0.5) * 2 * 0.5;
+    } else {
+      vu.uTint.value.set(1.18, 0.98, 0.78);
+      vu.uTintAmt.value = duskK * 0.7;
+    }
+    vu.uSide.value = -this.sunDir.x;
     // Night is moonlit blue, not black: the lit areas stay warm, the rest reads as cold and dangerous.
     const L = this.look;
     this.renderer.toneMappingExposure = L.exposure;
@@ -870,7 +931,7 @@ export class GameRenderer {
     this.hemi.color.setHex(n > 0.5 ? 0x5a70b0 : 0xf0e6d4);
     this.hemi.groundColor.setHex(n > 0.5 ? 0x1a1a28 : 0x5e4c34);
     this.sun.intensity = L.sunDay * (1 - n) + L.sunNight * n;
-    this.sun.color.setHex(n > 0.5 ? 0x7c92ff : n > 0.2 ? 0xffa868 : 0xffe4bc);
+    this.sun.color.setHex(n > 0.5 ? 0x7c92ff : 0xffe4bc).lerp(new THREE.Color(0xff9a50), n > 0.5 ? 0 : duskK);
 
     // Camera.
     if (this.autoPitch) this.pitch = 0.62 + 0.4 * Math.min(1, Math.max(0, (this.camDist - 14) / 56));
@@ -884,7 +945,8 @@ export class GameRenderer {
       this.camera.position.y += (Math.random() - 0.5) * this.shake * 0.6;
       this.shake *= Math.max(0, 1 - dt * 7);
     }
-    this.sun.position.set(t.x - 20, 40, t.z + 15);
+    this.sun.position.set(t.x + this.sunDir.x * 55, Math.max(8, this.sunDir.y * 55), t.z + this.sunDir.z * 55);
+    this.sky.mesh.position.copy(this.camera.position);
     this.sun.target.position.set(t.x, 0, t.z);
     this.railway.position.x = Math.round(t.x);
 
@@ -1102,11 +1164,8 @@ export class GameRenderer {
       this.ghost.position.set(Math.floor(g.pos.x) + 0.5, 0.6, Math.floor(g.pos.z) + 0.5);
       (this.ghost.material as THREE.MeshBasicMaterial).color.setHex(g.valid ? 0x40ff60 : 0xff4040);
     } else this.ghost.visible = false;
-    if (overlay.skillTarget) {
-      this.skillRing.visible = true;
-      this.skillRing.position.set(overlay.skillTarget.pos.x, 0.08, overlay.skillTarget.pos.z);
-      this.skillRing.scale.setScalar(overlay.skillTarget.radius);
-    } else this.skillRing.visible = false;
+    this.skillRing.visible = false;
+    this.skillAim = overlay.skillTarget ?? null;
 
     // Torch flames flicker on top of every lit torch (brighter at night).
     this.torchFlames.begin();
@@ -1135,6 +1194,9 @@ export class GameRenderer {
     for (const v of this.scenery) v.begin();
     for (const v of this.groves) v.begin();
     for (const v of this.landmarks.values()) v.begin();
+    this.hay.begin();
+    this.signs.begin();
+    this.camps.begin();
     for (let i = 0; i < 7; i++) {
       const chunk = first + i;
       const terrain = chunkTerrain(seed, chunk);
@@ -1157,6 +1219,9 @@ export class GameRenderer {
     for (const v of this.scenery) v.end();
     for (const v of this.groves) v.end();
     for (const v of this.landmarks.values()) v.end();
+    this.hay.end();
+    this.signs.end();
+    this.camps.end();
     this.placeDecor(seed, first);
   }
 
@@ -1207,8 +1272,7 @@ export class GameRenderer {
   private updateFx(dt: number): void {
     let seg = 0;
     this.puffs.begin();
-    let ringIdx = 0;
-    for (const r of this.fxRings) r.visible = false;
+    this.tele.begin();
     const col = new THREE.Color();
     for (const f of this.fx) {
       f.t += dt;
@@ -1237,22 +1301,22 @@ export class GameRenderer {
         this.puffs.add(f.a.x, 0.5 + k, f.a.z, 0, sc * 2, sc * 2, sc * 2, f.color);
       } else if (f.kind === 'ring') {
         this.rings.add(f.a.x, 0.07, f.a.z, 0, f.r * (1 + k * 1.5), 1, f.r * (1 + k * 1.5), f.color);
-      } else if ((f.kind === 'telegraph' || f.kind === 'slam') && ringIdx < this.fxRings.length) {
-        const m = this.fxRings[ringIdx++];
-        m.visible = true;
-        m.position.set(f.a.x, 0.06, f.a.z);
-        const mat = m.material as THREE.MeshBasicMaterial;
-        mat.color.setHex(f.color);
-        if (f.kind === 'telegraph') {
-          m.scale.setScalar(f.r * Math.min(1, 0.3 + k));
-          mat.opacity = 0.25 + 0.25 * Math.sin(k * 20) ** 2;
-        } else {
-          m.scale.setScalar(f.r * (0.6 + k * 0.6));
-          mat.opacity = 0.6 * (1 - k);
-        }
+      } else if (f.kind === 'telegraph') {
+        // Incoming strike: the fill closes on the rim as the blow lands; it flashes in the last fifth.
+        const y = terrainHeight(this.seed, f.a.x, f.a.z);
+        this.tele.add(1, f.a.x, y, f.a.z, f.r, f.color, k, this.time, k > 0.8 ? 0.75 + 0.25 * Math.sin(this.time * 40) : 0.9);
+      } else if (f.kind === 'slam') {
+        const y = terrainHeight(this.seed, f.a.x, f.a.z);
+        this.tele.add(2, f.a.x, y, f.a.z, f.r * 1.15, f.color, k, this.time, 1 - k);
       }
     }
     this.fx = this.fx.filter((f) => f.t < f.ttl);
+    if (this.skillAim) {
+      // Player aiming an ability: gold, turning rim with a crosshair.
+      const a = this.skillAim;
+      this.tele.add(0, a.pos.x, terrainHeight(this.seed, a.pos.x, a.pos.z), a.pos.z, a.radius, 0xffd36a, 0, this.time, 0.95);
+    }
+    this.decals.update(dt, (x, z) => terrainHeight(this.seed, x, z));
     this.puffs.end();
     this.rings.end();
     const g = this.tracer.geometry;
@@ -1304,7 +1368,12 @@ export class GameRenderer {
       const pitch = -Math.atan2(dy, len);
       this.arrowMesh.add(x, y, z, yaw, 1, 1, 1, undefined, pitch);
     }
-    for (const p of this.projectiles) if (p.t >= p.ttl && p.kind !== 'spit') this.fxp.thud(p.b.x, p.b.z);
+    for (const p of this.projectiles) {
+      if (p.t < p.ttl || p.kind === 'spit') continue;
+      this.fxp.thud(p.b.x, p.b.z);
+      // Rain arrows always stick; aimed shots stick when they miss into the turf.
+      if (p.kind === 'rain' || Math.random() < 0.35) this.decals.arrow(p.b.x + (Math.random() - 0.5) * 0.3, p.b.z + (Math.random() - 0.5) * 0.3, p.a.x, p.a.z);
+    }
     this.projectiles = this.projectiles.filter((p) => p.t < p.ttl);
     this.arrowMesh.end();
     this.spitMesh.end();
@@ -1377,7 +1446,79 @@ export class GameRenderer {
         v.add(x0 + h(4) * L, 0, side * (30 + h(1) * 8), h(5) * Math.PI * 2, sc, sc, sc, 0xffffff);
       }
     }
-    if (this.landmarks.size) this.placeLandmarks(seed, chunk, terrain);
+    if (this.landmarks.size) {
+      this.placeLandmarks(seed, chunk, terrain);
+      this.placeMidground(seed, chunk, terrain);
+    }
+  }
+
+  /**
+   * Working countryside in the band between the line and the villages (|z| 9..27): haystacks by a cart, wayposts,
+   * fence runs, supply piles, cold campfires. Kept low so it never hides a fight, and clear of resource nodes, the
+   * player's buildings and the village track. Trees and rocks stay out: those read as resources.
+   */
+  private placeMidground(seed: number, chunk: number, terrain: 'plains' | 'forest' | 'canyon'): void {
+    const L = BALANCE.world.chunkLength;
+    const x0 = chunkCenter(chunk) - L / 2;
+    const v = terrain === 'canyon' ? null : chunkLayout(seed, chunk).village;
+    const put = (name: MedName, x: number, z: number, rot: number, sc = 1) =>
+      this.landmarks.get(name)!.add(x, terrainHeight(seed, x, z) - 0.05, z, rot, sc, sc, sc, 0xffffff);
+    const proc = (inst: Instanced, x: number, z: number, rot: number, sc = 1) => inst.add(x, terrainHeight(seed, x, z) - 0.04, z, rot, sc, sc, sc);
+    const clear = (x: number, z: number, r: number) => {
+      if (Math.abs(z) < 9) return false;
+      if (v && z < 0 && Math.abs(x - trackX(v, z)) < 2.4 + r) return false;
+      for (const n of this.dressNodes) if ((n.x - x) ** 2 + (n.z - z) ** 2 < (r + 1.8) ** 2) return false;
+      for (const st of this.dressStructs) if ((st.cx + 0.5 - x) ** 2 + (st.cz + 0.5 - z) ** 2 < (r + 1.5) ** 2) return false;
+      return true;
+    };
+    const count = terrain === 'canyon' ? 3 : 8;
+    for (let k = 0; k < count; k++) {
+      const h = (salt: number) => hash01(seed, chunk, 40 + k, salt);
+      const side = k % 2 === 0 ? 1 : -1;
+      const x = x0 + (k + 0.15 + h(1) * 0.7) * (L / count);
+      const z = side * (10 + h(2) * 17);
+      if (!clear(x, z, 2)) continue;
+      const rot = h(3) * Math.PI * 2;
+      const ca = Math.cos(rot);
+      const sa = Math.sin(rot);
+      const at = (dx: number, dz: number): [number, number] => [x + dx * ca + dz * sa, z - dx * sa + dz * ca];
+      const kind = terrain === 'canyon' ? (h(4) < 0.5 ? 3 : 4) : Math.floor(h(4) * 6);
+      if (kind === 0 && terrain === 'plains') {
+        // Haystacks with a cart left beside them.
+        const n = 2 + Math.floor(h(5) * 2);
+        for (let i = 0; i < n; i++) proc(this.hay, ...at(i * 1.5 - 1, (h(6 + i) - 0.5) * 1.2), h(9 + i) * 6, 0.8 + h(12 + i) * 0.35);
+        put('cart', ...at(0.5, 1.9), rot + Math.PI / 2, 0.9);
+      } else if (kind <= 1) {
+        // A fence run with a gap, a barrel at its end.
+        const n = 3 + Math.floor(h(5) * 3);
+        for (let i = 0; i < n; i++) {
+          if (i === 1 + Math.floor(h(6) * (n - 2))) continue;
+          put(h(7 + i) < 0.25 ? 'fenceBroken' : 'fence', ...at((i - n / 2) * 1.6, 0), rot);
+        }
+        put('barrel', ...at((n / 2) * 1.6 + 0.4, 0.5), h(15) * 6);
+      } else if (kind === 2) {
+        // A waypost where a path crosses, with a lantern and a pile of crates.
+        proc(this.signs, x, z, rot);
+        put('crates', ...at(1.2, 0.6), h(16) * 6, 0.9);
+        put('lantern', ...at(-0.9, 0.3), 0, 1.1);
+      } else if (kind === 3) {
+        // A cold campfire with logs to sit on.
+        proc(this.camps, x, z, rot, 1.1);
+        put('logs', ...at(1.5, 0), rot + 0.3, 0.8);
+        if (h(17) < 0.6) put('barrel', ...at(-1.3, 0.8), 0, 1);
+      } else if (kind === 4) {
+        // Debris from an old fight: a cart wheel, rubble and a broken fence.
+        put('wheel', ...at(0, 0), h(18) * 6, 0.9);
+        put('rubble', ...at(1.6, 0.8), h(19) * 6, 0.8);
+        put('fenceBroken', ...at(-1.6, -0.4), rot);
+      } else {
+        // A supply drop: crates and barrels.
+        put('crates', ...at(0, 0), rot, 1);
+        put('barrel', ...at(1.1, 0.3), 0, 1.1);
+        put('barrel', ...at(1.4, -0.7), 0, 1);
+        if (terrain === 'plains' && h(20) < 0.5) proc(this.hay, ...at(-1.6, 0.4), h(21) * 6, 0.75);
+      }
+    }
   }
 
   /** Medieval countryside beside the line: villages with fields and a track to the railway, old ruins and siege wrecks. */

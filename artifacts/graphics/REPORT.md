@@ -149,3 +149,67 @@ Average 1.4 → 2.0; every category is now at 2, so no category blocks premium. 
 means about three categories at 3. The nearest candidates: Lighting (a sky dome and dusk light shafts), VFX (impact
 decals and readable ability telegraphs) and World (water, roads and denser mid-ground set dressing). A single authored
 character and building set remains the way past the mixed-pack ceiling on Art direction.
+
+---
+
+# Light, impact and world pass (threejs-aaa-graphics-builder)
+
+**Light.** A gradient sky dome (`src/render/sky.ts`, one draw call) with a sun and moon disc replaces the flat clear
+colour; the fog takes the sky's horizon colour, so the far meadow melts into the sky. The sun now travels: it rises in
+the east, stands high at noon, and drops low and orange in the west at dusk, so shadows lengthen and turn as the day
+goes; at night a cool high moon. A time-of-day grade in the vignette pass warms the frame from the sun's side at dusk
+and cools it at night.
+
+**Impacts.** `src/render/decals.ts`: one instanced draw for ground marks from a canvas atlas (scorch where a building
+falls, cracks and scorch under a boss slam, bone dust where a skeleton dies, pockmarks under an arrow volley). Marks
+fade over 16–26 s, so a fought-over field reads as such without filling up. Arrows from a volley (and about a third of
+aimed shots) stay standing in the turf for 7–9 s and sink away.
+
+**Telegraphs.** One shader disc per warning replaces the flat red circles: a dashed rim that turns, and for an incoming
+boss strike a red fill that closes on the rim as the blow lands (time to impact at a glance), flashing in the last
+fifth; the impact itself is a shockwave band travelling outward. Aiming an ability shows a gold rim with a crosshair.
+Discs sit above the grass tips so the meadow never hides a warning.
+
+**World.** The band between the railway and the villages (9–27 units from the line) gets working countryside per chunk:
+haystacks beside a cart, fence runs with a gap and a barrel, wayposts with a lantern and crates, cold campfires with
+logs, old fight debris, supply piles. Haystacks, wayposts and campfires are new procedural meshes; the rest reuses the
+medieval kit. Dressing is kept low, never placed on resource nodes, player buildings or the village track, and uses no
+trees or rocks (those read as resources).
+
+## Measurements (seed 39, endless, bot playing; whole-frame counts)
+
+| Capture | Draw calls | Triangles | Mean lum | Contrast | Entropy | Edges | Dominant |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| day desktop 1600×900 | 224 | 1.05 M | 123 | 100 | 5.05 | 0.44 | 0.19 |
+| day mobile 812×375 | 224 | 1.05 M | 122 | 101 | 4.98 | 0.46 | 0.20 |
+| day mobile, low tier | 158 | 0.62 M | 130 | 97 | 3.80 | 0.31 | 0.44 |
+| dusk desktop | 213 | 1.05 M | 94 | 82 | 5.31 | 0.37 | 0.15 |
+| night desktop (8+ monsters at the castle) | 241 | 1.08 M | 64 | 105 | 5.44 | 0.37 | 0.11 |
+| night mobile | 241 | 1.08 M | 60 | 105 | 5.23 | 0.36 | 0.13 |
+| night mobile, low tier | 167 | 0.61 M | 59 | 101 | 4.94 | 0.27 | 0.30 |
+
+Cost of the pass: about +15 draw calls (sky, decals, stuck arrows, telegraph discs while shown, three dressing meshes)
+and +50 k triangles; desktop stays under 300 calls. The low tier is unchanged in kind and still above the mobile
+starting budget, as before.
+
+Captures: `compare-light-vfx.jpg` (day, dusk, night, telegraphs), `p3-*.jpg`.
+
+## Scorecard after this pass
+
+| Category | Before | Now | Evidence |
+| --- | --- | --- | --- |
+| Art direction | 2 | 2 | unchanged; mixed asset packs still cap it |
+| Hero (castle) | 2 | 2 | |
+| Enemies | 2 | 2 | |
+| Interactables | 2 | 2 | |
+| World | 2 | 2.5 | mid-ground working countryside per chunk; still no water or roads beyond village tracks |
+| Materials | 2 | 2 | |
+| Lighting/render | 2 | 2.5 | moving sun with long dusk light, warm/cool time-of-day grade, sky-tinted fog; the dome itself is mostly out of frame at the gameplay pitch |
+| VFX/motion | 2 | 2.5 | lasting impact marks, stuck arrows, telegraphs that show time to impact |
+| UI/HUD | 2 | 2 | |
+| Performance evidence | 2 | 2 | |
+
+Average 2.0 → 2.15. Not premium yet (2.3 needed). Honest blockers: none of the three reached 3 because each still has a
+gap a player would notice — the sky is barely visible at the default camera (a lower title/zoomed-in view or light
+shafts would show it), the VFX lack a hit-stop/flash beat on big impacts, and the world still lacks water and proper
+roads. The fastest way to 2.3 is finishing those three, or one authored character and building set for Art direction.
