@@ -171,8 +171,8 @@ const KENNEY_COLORS: Record<string, number> = {
 const MED_COLORS: Record<string, number> = {
   Wood: 0x6b4a2e,
   Wood_Light: 0x94704a,
-  Stone: 0x7a766c,
-  Stone_Light: 0xa49d8c,
+  Stone: 0x6e675b,
+  Stone_Light: 0x8f8676,
   Main: 0x8c3b28,
   Red: 0x7a2018,
   White: 0xd6c9a8,
@@ -204,9 +204,10 @@ function medievalPixel(r: number, g: number, b: number): [number, number, number
     l *= 0.8;
     s *= 0.85;
   } else if (deg < 55 && l > 0.6) {
-    h = 36 / 360;
-    s = 0.1;
-    l *= 0.74;
+    // Pale sand → warm grey stone, dark enough to keep its form under filmic tone mapping.
+    h = 34 / 360;
+    s = 0.14;
+    l *= 0.6;
   } else if (deg < 55) {
     s *= 0.72;
     l *= 0.82;
@@ -251,30 +252,109 @@ function medievalMap(src: THREE.Texture): THREE.Texture {
 
 let medieval = false; // set while loading m_* files
 
-function toLambert(m: THREE.Material): THREE.Material {
+// Shared material kit: one material per role (colour, texture, surface), reused by every model, so the castle
+// and the scenery merge into few draw calls. PBR (roughness/metalness) under the scene's environment light.
+const matCache = new Map<string, THREE.Material>();
+export function sharedStandard(p: { color?: number; map?: THREE.Texture | null; roughness?: number; metalness?: number; flat?: boolean; vertexColors?: boolean; key?: string }): THREE.MeshStandardMaterial {
+  const key = `std|${p.color ?? ''}|${p.map ? p.key ?? p.map.uuid : ''}|${p.roughness ?? 0.85}|${p.metalness ?? 0}|${p.flat ? 1 : 0}|${p.vertexColors ? 1 : 0}`;
+  let m = matCache.get(key) as THREE.MeshStandardMaterial | undefined;
+  if (!m) {
+    m = new THREE.MeshStandardMaterial({
+      color: p.color ?? 0xffffff,
+      map: p.map ?? null,
+      roughness: p.roughness ?? 0.85,
+      metalness: p.metalness ?? 0,
+      flatShading: p.flat ?? false,
+      vertexColors: p.vertexColors ?? false,
+    });
+    addWear(m);
+    matCache.set(key, m);
+  }
+  return m;
+}
+
+/**
+ * Procedural surface wear in world space (no textures, no UVs): low-frequency weathering, fine grain, and grime that
+ * darkens surfaces towards the ground, so stone, timber and cloth stop looking like flat plastic and objects sit in the
+ * world. One shared shader variant for every kit material.
+ */
+function addWear(m: THREE.MeshStandardMaterial): void {
+  m.onBeforeCompile = (shader) => {
+    shader.vertexShader = 'varying vec3 vWearPos;\n' + shader.vertexShader.replace(
+      '#include <project_vertex>',
+      `#include <project_vertex>
+       #ifdef USE_INSTANCING
+         vWearPos = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
+       #else
+         vWearPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+       #endif`,
+    );
+    shader.fragmentShader = `varying vec3 vWearPos;
+      float wearHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+      float wearNoise(vec3 x) {
+        vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(mix(wearHash(i), wearHash(i + vec3(1,0,0)), f.x), mix(wearHash(i + vec3(0,1,0)), wearHash(i + vec3(1,1,0)), f.x), f.y),
+                   mix(mix(wearHash(i + vec3(0,0,1)), wearHash(i + vec3(1,0,1)), f.x), mix(wearHash(i + vec3(0,1,1)), wearHash(i + vec3(1,1,1)), f.x), f.y), f.z);
+      }\n` + shader.fragmentShader.replace(
+      '#include <color_fragment>',
+      `#include <color_fragment>
+       float wBig = wearNoise(vWearPos * 0.9);
+       float wFine = wearNoise(vWearPos * 7.0);
+       diffuseColor.rgb *= 0.86 + 0.2 * wBig + 0.08 * (wFine - 0.5);
+       // Grime and contact darkness near the ground.
+       diffuseColor.rgb *= mix(0.72, 1.0, smoothstep(0.0, 0.7, vWearPos.y));`,
+    );
+  };
+  m.customProgramCacheKey = () => 'kit-wear';
+}
+
+// Surface by material name: metal is smooth and metallic, stone and fabric are dull, wood in between.
+function surface(name: string): { roughness: number; metalness: number } {
+  if (/metal|gold|iron|steel/i.test(name)) return { roughness: 0.38, metalness: 0.75 };
+  if (/stone|rock|snow|dirt/i.test(name)) return { roughness: 0.95, metalness: 0 };
+  if (/fabric|wheat|grass|leaf/i.test(name)) return { roughness: 0.92, metalness: 0 };
+  if (/water/i.test(name)) return { roughness: 0.2, metalness: 0 };
+  return { roughness: 0.82, metalness: 0 };
+}
+
+const mapCache = new Map<string, THREE.Texture>();
+function toShared(m: THREE.Material): THREE.Material {
   const src = m as THREE.MeshStandardMaterial;
   if (medieval) {
     const tuned = MED_COLORS[src.name];
-    if (tuned !== undefined) return new THREE.MeshLambertMaterial({ color: tuned });
+    if (tuned !== undefined) return sharedStandard({ color: tuned, ...surface(src.name) });
     if (src.map) {
       // Kenney atlas: keep the per-texture transform (offset/repeat) on a clone of the recoloured texture.
-      const map = medievalMap(src.map).clone();
-      map.offset.copy(src.map.offset);
-      map.repeat.copy(src.map.repeat);
-      map.rotation = src.map.rotation;
-      map.center.copy(src.map.center);
-      map.needsUpdate = true;
-      return new THREE.MeshLambertMaterial({ map });
+      const t = src.map;
+      const tkey = `${t.offset.x},${t.offset.y},${t.repeat.x},${t.repeat.y},${t.rotation}`;
+      let map = mapCache.get(tkey);
+      if (!map) {
+        map = medievalMap(t).clone();
+        map.offset.copy(t.offset);
+        map.repeat.copy(t.repeat);
+        map.rotation = t.rotation;
+        map.center.copy(t.center);
+        map.needsUpdate = true;
+        mapCache.set(tkey, map);
+      }
+      return sharedStandard({ map, key: `kenney|${tkey}`, roughness: 0.88 });
     }
   }
   const tuned = KENNEY_COLORS[src.name];
-  if (tuned !== undefined) return new THREE.MeshLambertMaterial({ color: tuned, flatShading: true });
+  if (tuned !== undefined) return sharedStandard({ color: tuned, flat: true, ...surface(src.name) });
   if (src.name === 'Glow' || (src.emissive && src.emissive.getHex() !== 0 && !src.map)) {
-    // Skeleton eyes: unlit so they glow in the dark.
-    return new THREE.MeshBasicMaterial({ color: src.emissive?.getHex() || 0x60f0ff });
+    // Skeleton eyes: unlit so they glow in the dark (and bloom).
+    const c = src.emissive?.getHex() || 0x60f0ff;
+    let g = matCache.get(`glow|${c}`);
+    if (!g) {
+      g = new THREE.MeshBasicMaterial({ color: new THREE.Color(c).multiplyScalar(2.2) });
+      matCache.set(`glow|${c}`, g);
+    }
+    return g;
   }
   // KayKit atlas: a warm, slightly muted multiply so it sits in the medieval palette.
-  return new THREE.MeshLambertMaterial({ map: src.map ?? null, color: src.map ? 0xe8dfcf : src.color });
+  if (src.map) return sharedStandard({ map: src.map, color: 0xe8dfcf, roughness: 0.78, key: `kaykit|${src.map.uuid}` });
+  return sharedStandard({ color: src.color.getHex(), ...surface(src.name) });
 }
 
 /** Bake every visible mesh under `root` (skinned or not) in its current pose into one geometry with material groups. */
@@ -328,9 +408,14 @@ function bake(root: THREE.Object3D, mats: Map<THREE.Material, number>, matList: 
       const m = srcMats[g.materialIndex ?? 0];
       let idx = mats.get(m);
       if (idx === undefined) {
-        idx = matList.length;
+        // Several source materials can share one kit material: reuse its slot.
+        const shared = toShared(m);
+        idx = matList.indexOf(shared);
+        if (idx < 0) {
+          idx = matList.length;
+          matList.push(shared);
+        }
         mats.set(m, idx);
-        matList.push(toLambert(m));
       }
       out.addGroup(g.start, g.count, idx);
     }

@@ -195,3 +195,27 @@ export function glowTexture(): THREE.Texture {
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
+
+/** Timber scaffold around a building site: corner posts, ledgers, cross braces and a plank deck; base at y=0, 1 tall. */
+export function scaffoldGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const post = 0x7a5634;
+  const beam = 0x9a7446;
+  const plank = 0xb8935e;
+  for (const [x, z] of [[-0.48, -0.48], [0.48, -0.48], [-0.48, 0.48], [0.48, 0.48]]) {
+    parts.push(part(new THREE.BoxGeometry(0.07, 1, 0.07), post, x, 0.5, z));
+  }
+  for (const y of [0.34, 0.68, 0.98]) {
+    for (const [x, z, ry] of [[0, -0.48, 0], [0, 0.48, 0], [-0.48, 0, Math.PI / 2], [0.48, 0, Math.PI / 2]]) {
+      parts.push(part(new THREE.BoxGeometry(1.0, 0.035, 0.05), beam, x, y, z, 0, ry));
+    }
+  }
+  // Cross braces on two faces.
+  for (const [z, s] of [[-0.5, 1], [0.5, -1]]) {
+    parts.push(part(new THREE.BoxGeometry(1.2, 0.03, 0.03), beam, 0, 0.5, z, 0, 0, s * Math.atan2(0.95, 0.95)));
+  }
+  // A plank deck halfway up and a few loose planks at the top.
+  parts.push(part(new THREE.BoxGeometry(0.98, 0.025, 0.4), plank, 0, 0.68, -0.26));
+  parts.push(part(new THREE.BoxGeometry(0.4, 0.025, 0.98), plank, 0.26, 0.98, 0));
+  return merge(parts);
+}

@@ -61,7 +61,7 @@ export class Grass {
   private key = '';
 
   constructor(scene: THREE.Scene) {
-    const mat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.95, metalness: 0 });
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uTime = this.uniforms.uTime;
       shader.vertexShader = shader.vertexShader
@@ -104,7 +104,7 @@ export class Grass {
     const cols = this.mesh.instanceColor!.array as Float32Array;
     let n = 0;
     for (let k = c0 - RADIUS; k <= c0 + RADIUS; k++) {
-      const share = (Math.abs(k - c0) <= 1 ? 1 : 0.4) * (low ? 0.5 : 1);
+      const share = (Math.abs(k - c0) <= 1 ? 1 : 0.4) * (low ? 0.3 : 1);
       const g = this.chunk(seed, k);
       const take = Math.min(g.n, Math.floor(g.n * share));
       // Clumps are stored in random order, so the first `take` are an even thinning.

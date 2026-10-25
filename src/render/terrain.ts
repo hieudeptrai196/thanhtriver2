@@ -177,7 +177,7 @@ export class Terrain {
   private meshes: THREE.Mesh[] = [];
   private chunkOf: number[] = [];
   private seedOf = -1;
-  private material = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  private material = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1, metalness: 0 });
 
   constructor(scene: THREE.Scene, count = 7) {
     for (let i = 0; i < count; i++) {

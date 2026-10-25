@@ -5,6 +5,7 @@ import type { GameEvent, GameState, Vec } from '../sim/types';
 import { hash01 } from '../sim/rng';
 import { chunkCenter, chunkTerrain } from '../sim/world';
 import { Grass } from './grass';
+import { Particles } from './particles';
 import { chunkLayout, Terrain, terrainHeight, trackX } from './terrain';
 import {
   castleGeometry,
@@ -12,12 +13,19 @@ import {
   glowTexture,
   monsterGeometry,
   nodeGeometry,
+  scaffoldGeometry,
   structGeometry,
   unitGeometry,
   wheelGeometry,
 } from './geometry';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ACT_FRAMES, loadModels, MOVE_FRAMES, type Baked, type CharModel, type DecorName, type MedName, type Models } from './models';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ACT_FRAMES, loadModels, MOVE_FRAMES, type Baked, type CharModel, type DecorName, type MedName, type Models, sharedStandard } from './models';
 
 export interface Overlay {
   ghost: { type: StructType; pos: Vec; valid: boolean } | null;
@@ -30,6 +38,18 @@ const LANDMARKS: MedName[] = [
   'house', 'house2', 'hut', 'storage', 'market', 'stall', 'barrel', 'crates', 'treeCrooked', 'treeHigh', 'fence', 'hedge',
   'lantern', 'stoneNarrow', 'hexTower', 'rubble',
 ];
+// Soft corner darkening, kept off the middle of the screen where the castle and the fight are.
+const VIGNETTE = {
+  uniforms: { tDiffuse: { value: null }, uStrength: { value: 0.55 }, uSize: { value: 0.78 } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float uStrength, uSize; varying vec2 vUv;
+    void main(){
+      vec4 c = texture2D(tDiffuse, vUv);
+      float d = distance(vUv, vec2(0.5));
+      c.rgb *= mix(1.0, smoothstep(uSize, uSize - 0.45, d), uStrength);
+      gl_FragColor = c;
+    }`,
+};
 const MAX_POINT_LIGHTS = 6;
 // Height of the castle deck where archers stand once the KayKit castle is loaded.
 const WALL_WALK_Y = 1.9;
@@ -201,7 +221,9 @@ export class GameRenderer {
   readonly camera: THREE.PerspectiveCamera;
   // Camera rig: target on the ground, distance along a fixed pitch. North (-z) is up on screen.
   camTarget = new THREE.Vector3(0, 0, 0);
-  camDist = 40;
+  camDist = 32;
+  // Pitch follows zoom: low and cinematic up close, near top-down when zoomed out for the overview.
+  autoPitch = true;
   private camSmooth = new THREE.Vector3();
   private pitch = 0.95;
   pixelRatio = Math.min(window.devicePixelRatio, 2);
@@ -211,6 +233,9 @@ export class GameRenderer {
   private pointLights: THREE.PointLight[] = [];
   private terrain: Terrain;
   private grass: Grass;
+  private fxp: Particles;
+  private smokeIndex = 0;
+  private shake = 0;
   private decor = new Map<DecorName, Instanced>();
   private decorKey = '';
   private crops: Instanced[] = [];
@@ -229,6 +254,15 @@ export class GameRenderer {
   private castleCode: THREE.Mesh;
   private flags: THREE.Group;
   private roomGroup: THREE.Group | null = null;
+  // Static castle parts (hidden sources) and the one merged mesh that draws them.
+  private castleStatic: THREE.Object3D[] = [];
+  private castleMerged: THREE.Mesh | null = null;
+  // Post: bloom on authored emissive (torches, fire, eyes, lanterns) and a light vignette. Off on weak devices.
+  private composer: EffectComposer;
+  private bloom: UnrealBloomPass;
+  post = true;
+  // Lighting look, tuned against active play (day and night).
+  look = { exposure: 0.85, envDay: 0.3, envNight: 0.12, hemiDay: 0.7, hemiNight: 0.3, sunDay: 2.3, sunNight: 0.5 };
   private roomKey = '';
   private keepTop = DECK_Y + 7;
   private models: Models | null = null;
@@ -269,14 +303,27 @@ export class GameRenderer {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // Filmic tone mapping and a soft studio environment so PBR materials (iron, brass, stone) read as materials.
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.0;
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmrem.dispose();
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.5, 400);
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(512, 512), 0.5, 0.35, 0.9);
+    this.composer.addPass(this.bloom);
+    this.composer.addPass(new ShaderPass(VIGNETTE));
+    this.composer.addPass(new OutputPass());
     this.scene.background = new THREE.Color(0xaabfc6);
     this.scene.fog = new THREE.Fog(0xaabfc6, 60, 140);
 
     this.terrain = new Terrain(this.scene);
     this.grass = new Grass(this.scene);
+    this.fxp = new Particles(this.scene);
     this.hemi = new THREE.HemisphereLight(0xf0e6d4, 0x5e4c34, 1.6);
     this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xffe4bc, 1.9);
@@ -301,7 +348,7 @@ export class GameRenderer {
       this.pointLights.push(l);
     }
 
-    const flat = (opts: THREE.MeshLambertMaterialParameters = {}) => new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, ...opts });
+    const flat = () => sharedStandard({ vertexColors: true, flat: true, roughness: 0.85 });
     const mat = flat();
 
     this.railway = this.buildRailway();
@@ -314,8 +361,8 @@ export class GameRenderer {
     this.castle.add(this.flags);
     // Train undercarriage: two bogies of two axles per side, on the rails, with coupling rods.
     const wg = wheelGeometry();
-    const iron = new THREE.MeshLambertMaterial({ color: 0x34343a });
-    const brass = new THREE.MeshLambertMaterial({ color: 0xb08a3a });
+    const iron = sharedStandard({ color: 0x34343a, roughness: 0.45, metalness: 0.7 });
+    const brass = sharedStandard({ color: 0xb08a3a, roughness: 0.35, metalness: 0.8 });
     for (const z of [-RAIL_Z, RAIL_Z]) {
       for (const x of [-2.7, -1.5, 1.5, 2.7]) {
         const w = new THREE.Mesh(wg, mat);
@@ -330,6 +377,7 @@ export class GameRenderer {
         const frame = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.28, 0.22), iron);
         frame.position.set(x, WHEEL_Y + 0.15, z * 0.86);
         this.castle.add(frame);
+        this.castleStatic.push(frame);
         const rod = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.09, 0.09), brass);
         rod.position.set(x, WHEEL_Y, z + Math.sign(z) * 0.2);
         this.castle.add(rod);
@@ -340,14 +388,16 @@ export class GameRenderer {
     chassis.position.y = DECK_Y - 0.36;
     chassis.castShadow = true;
     this.castle.add(chassis);
+    this.castleStatic.push(chassis);
     // Cowcatcher at the front (+x) and two brass lanterns.
     const plowGeo = new THREE.ConeGeometry(1.4, 1.1, 4);
     plowGeo.rotateZ(-Math.PI / 2);
     plowGeo.rotateX(Math.PI / 4);
     plowGeo.scale(1, 0.55, 1.6);
-    const plow = new THREE.Mesh(plowGeo, new THREE.MeshLambertMaterial({ color: 0x8a2a20, flatShading: true }));
+    const plow = new THREE.Mesh(plowGeo, sharedStandard({ color: 0x8a2a20, flat: true, roughness: 0.6, metalness: 0.3 }));
     plow.position.set(3.85, 0.62, 0);
     this.castle.add(plow);
+    this.castleStatic.push(plow);
     for (const z of [-2.2, 2.2]) {
       const lamp = new THREE.Mesh(new THREE.IcosahedronGeometry(0.2, 0), new THREE.MeshBasicMaterial({ color: 0xffd27a }));
       lamp.position.set(3.45, DECK_Y + 0.35, z);
@@ -355,8 +405,8 @@ export class GameRenderer {
       this.lanterns.push(lamp);
     }
     // Stone chimneys in the back wall; smoke is spawned from their tops.
-    const chimStone = new THREE.MeshLambertMaterial({ color: 0x8a8274 });
-    const chimCap = new THREE.MeshLambertMaterial({ color: 0x4a3b2e });
+    const chimStone = sharedStandard({ color: 0x8a8274, roughness: 0.95 });
+    const chimCap = sharedStandard({ color: 0x4a3b2e, roughness: 0.9 });
     for (const z of [-1.1, 1.1]) {
       const stack = new THREE.Mesh(new THREE.BoxGeometry(0.5, 2.1, 0.5), chimStone);
       stack.position.set(-3.1, DECK_Y + 1.05, z);
@@ -364,6 +414,7 @@ export class GameRenderer {
       const cap = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.16, 0.62), chimCap);
       cap.position.set(-3.1, DECK_Y + 2.15, z);
       this.castle.add(stack, cap);
+      this.castleStatic.push(stack, cap);
       this.stacks.push(new THREE.Vector3(-3.1, DECK_Y + 2.3, z));
     }
     this.fire = new THREE.Mesh(new THREE.ConeGeometry(1.2, 2.4, 6), new THREE.MeshBasicMaterial({ color: 0xff6a20, transparent: true, opacity: 0.85 }));
@@ -379,9 +430,10 @@ export class GameRenderer {
     for (const t of ['tree', 'rock', 'bush'] as NodeType[]) this.nodes[t] = [new Instanced(nodeGeometry(t), mat, 800, this.scene)];
     const stumpGeo = new THREE.CylinderGeometry(0.2, 0.25, 0.3, 6);
     stumpGeo.translate(0, 0.15, 0);
-    this.stumps = new Instanced(stumpGeo, new THREE.MeshLambertMaterial({ color: 0x806040 }), 800, this.scene);
+    this.stumps = new Instanced(stumpGeo, sharedStandard({ color: 0x806040, roughness: 0.9 }), 800, this.scene);
     for (const t of ['wall', 'tower', 'torch'] as StructType[]) this.structs[t] = new Instanced(structGeometry(t), flat(), 300, this.scene);
-    this.blueprint = new Instanced(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0xd8b878, transparent: true, opacity: 0.4, depthWrite: false }), 300, this.scene, false);
+    // Building sites: a timber scaffold that grows with progress around the rising structure.
+    this.blueprint = new Instanced(scaffoldGeometry(), sharedStandard({ vertexColors: true, flat: true, roughness: 0.9 }), 300, this.scene, true);
     this.cliffs = [new Instanced(cliffGeometry(), mat, 600, this.scene)];
 
     const glowMat = new THREE.MeshBasicMaterial({ map: glowTexture(), color: 0xffc898, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false });
@@ -395,8 +447,8 @@ export class GameRenderer {
     this.rings = new Instanced(ringGeo, new THREE.MeshBasicMaterial({ color: 0xfff080, transparent: true, opacity: 0.9, depthWrite: false }), 96, this.scene, false);
     this.puffs = new Instanced(new THREE.IcosahedronGeometry(0.3, 0), new THREE.MeshBasicMaterial({ color: 0xffffff }), 128, this.scene, false);
     this.smokeMesh = new Instanced(new THREE.IcosahedronGeometry(0.5, 0), new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true, transparent: true, opacity: 0.75 }), 400, this.scene, false);
-    this.flameMesh = new Instanced(new THREE.IcosahedronGeometry(0.3, 0), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }), 400, this.scene, false);
-    this.torchFlames = new Instanced(new THREE.OctahedronGeometry(0.22, 0), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }), 300, this.scene, false);
+    this.flameMesh = new Instanced(new THREE.IcosahedronGeometry(0.3, 0), new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 2.6, 2.6), transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }), 400, this.scene, false);
+    this.torchFlames = new Instanced(new THREE.OctahedronGeometry(0.22, 0), new THREE.MeshBasicMaterial({ color: new THREE.Color(2.8, 2.8, 2.8), transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }), 300, this.scene, false);
     const arrowGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.9, 4);
     const tip = new THREE.ConeGeometry(0.08, 0.22, 4);
     tip.translate(0, 0.55, 0);
@@ -457,29 +509,31 @@ export class GameRenderer {
     this.structs.tower.setModel(m.med.watch);
     this.cliffs = [m.props.mountain, m.props.rockA, m.props.rockC].map((b) => new Instanced(b.geo, b.materials, 600, this.scene));
     // Far hillsides: pine stands and woods (not the hexagon-based hill tiles).
-    this.scenery = [m.med.pines, m.props.groveA, m.props.groveB].map((b) => new Instanced(b.geo, b.materials, 160, this.scene));
-    this.groves = [m.props.groveA, m.props.groveB].map((b) => new Instanced(b.geo, b.materials, 120, this.scene));
-    for (const n of LANDMARKS) this.landmarks.set(n, new Instanced(m.med[n].geo, m.med[n].materials, 120, this.scene));
+    this.scenery = [m.med.pines, m.props.groveA, m.props.groveB].map((b) => new Instanced(b.geo, b.materials, 160, this.scene, false));
+    this.groves = [m.props.groveA, m.props.groveB].map((b) => new Instanced(b.geo, b.materials, 120, this.scene, false));
+    // Far scenery casts no shadow: it sits outside the sun's shadow box almost all the time.
+    for (const n of LANDMARKS) this.landmarks.set(n, new Instanced(m.med[n].geo, m.med[n].materials, 120, this.scene, false));
     // Kenney Nature Kit: ground clutter (no shadows, it is small and plentiful) and crop fields for food.
     for (const [name, b] of Object.entries(m.decor) as [DecorName, Baked][]) {
       if (name === 'pumpkin' || name === 'wheat' || name === 'corn') continue;
       const big = name === 'log' || name === 'stumpOld' || name === 'campfire';
-      this.decor.set(name, new Instanced(b.geo, b.materials, big ? 120 : 3600, this.scene, big));
+      this.decor.set(name, new Instanced(b.geo, b.materials, big ? 120 : 3600, this.scene, false));
     }
-    this.crops = [m.decor.pumpkin, m.decor.wheat, m.decor.corn].map((b) => new Instanced(b.geo, b.materials, 800, this.scene));
+    this.crops = [m.decor.pumpkin, m.decor.wheat, m.decor.corn].map((b) => new Instanced(b.geo, b.materials, 800, this.scene, false));
     this.nodes.bush = this.crops;
     this.decorKey = '';
     // Castle: a walled medieval keep on the code-built timber deck with wheels (Kenney Castle Kit + Quaternius).
     this.castleCode.visible = false;
-    const deck = new THREE.Mesh(new THREE.BoxGeometry(6.6, 0.4, 4.7), new THREE.MeshLambertMaterial({ color: 0x5e4029 }));
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(6.6, 0.4, 4.7), sharedStandard({ color: 0x5e4029, roughness: 0.85 }));
     deck.position.y = DECK_Y - 0.2;
-    const trim = new THREE.Mesh(new THREE.BoxGeometry(6.8, 0.16, 4.9), new THREE.MeshLambertMaterial({ color: 0x3a2516 }));
+    const trim = new THREE.Mesh(new THREE.BoxGeometry(6.8, 0.16, 4.9), sharedStandard({ color: 0x3a2516, roughness: 0.85 }));
     trim.position.y = DECK_Y - 0.42;
     // Cobbled courtyard inside the walls.
-    const yard = new THREE.Mesh(new THREE.BoxGeometry(6.0, 0.04, 4.1), new THREE.MeshLambertMaterial({ color: 0x6f6658 }));
+    const yard = new THREE.Mesh(new THREE.BoxGeometry(6.0, 0.04, 4.1), sharedStandard({ color: 0x6f6658, roughness: 0.95 }));
     yard.position.y = DECK_Y + 0.02;
     yard.receiveShadow = true;
     this.castle.add(trim, deck, yard);
+    this.castleStatic.push(trim, deck, yard);
     deck.castShadow = true;
     this.buildWalls(m);
     this.roomKey = '';
@@ -588,11 +642,65 @@ export class GameRenderer {
       // Face the courtyard: rooms north of the keep look south, the rest face the camera.
       g.add(this.medMesh(name, x, DECK_Y, z, row === 0 ? 0 : Math.PI, size / w));
     }
+    this.mergeCastle();
+  }
+
+  /**
+   * Bake every static castle part (undercarriage, deck, walls, towers, keep, rooms) into one mesh with one draw group
+   * per shared material: ~15 draw calls instead of ~120. Sources stay in the scene graph, hidden.
+   */
+  private mergeCastle(): void {
+    const sources: THREE.Mesh[] = [];
+    const collect = (o: THREE.Object3D) => o.traverse((c) => { if ((c as THREE.Mesh).isMesh && !(c as THREE.InstancedMesh).isInstancedMesh) sources.push(c as THREE.Mesh); });
+    for (const o of this.castleStatic) collect(o);
+    collect(this.flags);
+    if (this.roomGroup) collect(this.roomGroup);
+    this.castle.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(this.castle.matrixWorld).invert();
+    const rel = new THREE.Matrix4();
+    const byMat = new Map<THREE.Material, THREE.BufferGeometry[]>();
+    for (const mesh of sources) {
+      // Sources were hidden by the previous merge; their transforms are still current.
+      rel.multiplyMatrices(inv, mesh.matrixWorld);
+      const geo = (mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone()).applyMatrix4(rel);
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const groups = geo.groups.length ? geo.groups : [{ start: 0, count: geo.getAttribute('position').count, materialIndex: 0 }];
+      for (const gr of groups) {
+        // A single material covers every group (a BoxGeometry has six groups but one material).
+        const m = Array.isArray(mesh.material) ? mats[gr.materialIndex ?? 0] ?? mats[0] : mesh.material;
+        const part = new THREE.BufferGeometry();
+        for (const name of ['position', 'normal', 'uv'] as const) {
+          const a = geo.getAttribute(name);
+          const size = name === 'uv' ? 2 : 3;
+          const arr = new Float32Array(gr.count * size);
+          if (a) for (let i = 0; i < gr.count; i++) for (let k = 0; k < size; k++) arr[i * size + k] = a.array[(gr.start + i) * a.itemSize + k];
+          part.setAttribute(name, new THREE.BufferAttribute(arr, size));
+        }
+        const list = byMat.get(m) ?? [];
+        list.push(part);
+        byMat.set(m, list);
+      }
+      geo.dispose();
+      mesh.visible = false;
+    }
+    const materials = [...byMat.keys()];
+    const merged = mergeGeometries(materials.map((m) => mergeGeometries(byMat.get(m)!, false)!), true)!;
+    merged.computeBoundingSphere();
+    if (this.castleMerged) {
+      this.castleMerged.geometry.dispose();
+      this.castle.remove(this.castleMerged);
+    }
+    this.castleMerged = new THREE.Mesh(merged, materials);
+    this.castleMerged.castShadow = true;
+    this.castleMerged.receiveShadow = true;
+    this.castle.add(this.castleMerged);
   }
 
   /** Shadows cost the most on weak GPUs; main turns them off when frames stay slow. */
   setShadows(on: boolean): void {
     if (this.renderer.shadowMap.enabled === on) return;
+    // Weak device: post goes with the shadows.
+    this.post = on;
     this.renderer.shadowMap.enabled = on;
     this.sun.castShadow = on;
     this.scene.traverse((o) => {
@@ -616,6 +724,9 @@ export class GameRenderer {
   resize(w: number, h: number): void {
     this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.setSize(w, h, false);
+    this.composer.setPixelRatio(this.pixelRatio);
+    this.composer.setSize(w, h);
+    this.fxp.setViewport(h * this.pixelRatio, this.camera.fov);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
@@ -664,16 +775,39 @@ export class GameRenderer {
           const crowd = this.monsters[type];
           this.corpses.push({ crowd, x: p.x, z: p.z, rot: Math.random() * Math.PI * 2, t: 0, scale: type === 'boss' && crowd.hasModel ? 2.4 : 1, color: 0xb0a0a0 });
           this.fx.push({ kind: 'puff', a: p, t: 0, ttl: 0.45, r: type === 'boss' ? 3 : 0.8, color: 0x403038 });
+          this.fxp.death(p.x, p.z, type === 'boss');
+          if (type === 'boss') this.shake = Math.max(this.shake, 0.6);
           break;
         }
+        case 'fx.hit':
+          if (e.to) this.fxp.hit(e.to.x, e.to.z);
+          break;
+        case 'fx.bite':
+          this.fxp.bite(p.x, p.z);
+          break;
+        case 'fx.castleHit':
+          this.fxp.chips(p.x + Math.sign(this.castle.position.x - p.x) * 0.6, p.z + Math.sign(this.castle.position.z - p.z) * 0.6);
+          this.shake = Math.max(this.shake, 0.12);
+          break;
+        case 'fx.structHit':
+          this.fxp.chips(p.x, p.z, true);
+          break;
+        case 'fx.gather':
+          if (Math.abs(p.x - this.camSmooth.x) < 40) this.fxp.gather(p.x, p.z);
+          break;
         case 'msg.unitLost': {
           const crowd = this.units[String(e.params?.unit ?? 'peasant') as UnitType];
           if (crowd) this.corpses.push({ crowd, x: p.x, z: p.z, rot: Math.random() * Math.PI * 2, t: 0, scale: 1, color: 0x9a9090 });
           break;
         }
         case 'fx.structDie':
+          this.fx.push({ kind: 'puff', a: p, t: 0, ttl: 0.4, r: 1.2, color: 0xc0a080 });
+          this.fxp.chips(p.x, p.z, true);
+          this.fxp.ring(p.x, p.z, 1.2);
+          break;
         case 'fx.built':
           this.fx.push({ kind: 'puff', a: p, t: 0, ttl: 0.4, r: 1.2, color: 0xc0a080 });
+          this.fxp.built(p.x, p.z);
           break;
         case 'fx.order':
         case 'fx.place':
@@ -693,6 +827,8 @@ export class GameRenderer {
           this.fx.push({ kind: 'slam', a: p, t: 0, ttl: 0.6, r: BALANCE.abilities.arrowRain.radius!, color: 0xfff0a0 });
           break;
         case 'fx.slam':
+          this.fxp.ring(p.x, p.z, Number(e.params?.r ?? 4));
+          this.shake = Math.max(this.shake, 0.45);
           this.fx.push({ kind: 'slam', a: p, t: 0, ttl: 0.5, r: Number(e.params?.r ?? BALANCE.abilities.arrowRain.radius), color: e.key === 'fx.slam' ? 0xff6030 : 0xfff0a0 });
           break;
         case 'fx.bell':
@@ -717,17 +853,28 @@ export class GameRenderer {
     (this.scene.background as THREE.Color).copy(sky);
     (this.scene.fog as THREE.Fog).color.copy(sky);
     // Night is moonlit blue, not black: the lit areas stay warm, the rest reads as cold and dangerous.
-    this.hemi.intensity = 1.6 * (1 - n) + 0.32 * n;
+    const L = this.look;
+    this.renderer.toneMappingExposure = L.exposure;
+    this.hemi.intensity = L.hemiDay * (1 - n) + L.hemiNight * n;
+    // The studio environment fills shadows by day; at night it fades so the torchlight carries the scene.
+    this.scene.environmentIntensity = L.envDay * (1 - n) + L.envNight * n;
     this.hemi.color.setHex(n > 0.5 ? 0x5a70b0 : 0xf0e6d4);
     this.hemi.groundColor.setHex(n > 0.5 ? 0x1a1a28 : 0x5e4c34);
-    this.sun.intensity = 1.9 * (1 - n) + 0.5 * n;
+    this.sun.intensity = L.sunDay * (1 - n) + L.sunNight * n;
     this.sun.color.setHex(n > 0.5 ? 0x7c92ff : n > 0.2 ? 0xffa868 : 0xffe4bc);
 
     // Camera.
+    if (this.autoPitch) this.pitch = 0.62 + 0.4 * Math.min(1, Math.max(0, (this.camDist - 14) / 56));
     this.camSmooth.lerp(this.camTarget, Math.min(1, dt * 10));
     const t = this.camSmooth;
     this.camera.position.set(t.x, Math.sin(this.pitch) * this.camDist, t.z + Math.cos(this.pitch) * this.camDist);
     this.camera.lookAt(t.x, 0, t.z);
+    // Impact shake: decays fast, never moves the aim far.
+    if (this.shake > 0.001) {
+      this.camera.position.x += (Math.random() - 0.5) * this.shake;
+      this.camera.position.y += (Math.random() - 0.5) * this.shake * 0.6;
+      this.shake *= Math.max(0, 1 - dt * 7);
+    }
     this.sun.position.set(t.x - 20, 40, t.z + 15);
     this.sun.target.position.set(t.x, 0, t.z);
     this.railway.position.x = Math.round(t.x);
@@ -755,32 +902,18 @@ export class GameRenderer {
     this.smokeTimer += dt * (c.moving ? 14 : 1.5);
     while (this.smokeTimer >= 1) {
       this.smokeTimer -= 1;
-      const st = this.stacks[this.particles.length % Math.max(1, this.stacks.length)];
+      const st = this.stacks[this.smokeIndex++ % Math.max(1, this.stacks.length)];
       if (!st) break;
-      this.particles.push({
-        x: c.x + st.x + (Math.random() - 0.5) * 0.2,
-        y: st.y,
-        z: c.z + st.z + (Math.random() - 0.5) * 0.2,
-        vx: c.moving ? -1.6 : 0.1,
-        vy: 1.4 + Math.random() * 0.6,
-        vz: (Math.random() - 0.5) * 0.3,
-        age: 0,
-        life: c.moving ? 2.4 : 3.2,
-        size: 0.35,
-        grow: 0.7,
-        color: n > 0.5 ? 0x3a3f4a : 0x9a9a9a,
-      });
+      this.fxp.smoke(c.x + st.x + (Math.random() - 0.5) * 0.2, st.y, c.z + st.z + (Math.random() - 0.5) * 0.2, c.moving ? -1.6 : 0.1, n > 0.5);
     }
     // Roof fire: flames and dark smoke from the keep.
     if (c.fire > 0) {
       for (let i = 0; i < 3; i++) {
-        const fx = c.x + (Math.random() - 0.5) * 2.4;
-        const fz = c.z + (Math.random() - 0.5) * 2.4;
-        this.particles.push({ x: fx, y: this.keepTop - 1.2, z: fz, vx: 0, vy: 2 + Math.random() * 1.5, vz: 0, age: 0, life: 0.6, size: 0.6, grow: -0.6, color: Math.random() < 0.5 ? 0xff7a20 : 0xffc040 });
+        this.fxp.flame(c.x + (Math.random() - 0.5) * 1.6, this.keepTop - 1.4 + Math.random(), c.z + (Math.random() - 0.5) * 1.6, 2.2);
       }
-      if (Math.random() < 0.3) this.particles.push({ x: c.x, y: this.keepTop, z: c.z, vx: 0.2, vy: 1.2, vz: 0, age: 0, life: 2.5, size: 0.6, grow: 0.8, color: 0x2a2a2e });
+      if (Math.random() < 0.35) this.fxp.smoke(c.x, this.keepTop, c.z, 0.3, true, 1.6);
     }
-    for (const l of this.lanterns) (l.material as THREE.MeshBasicMaterial).color.setHex(n > 0.3 ? 0xffe0a0 : 0xb08a3a);
+    for (const l of this.lanterns) (l.material as THREE.MeshBasicMaterial).color.setHex(n > 0.3 ? 0xffe0a0 : 0xb08a3a).multiplyScalar(n > 0.3 ? 2.4 : 1);
     // The cone only stands in for the flame particles on the code-built fallback castle.
     this.fire.visible = c.fire > 0 && !this.models;
     if (this.fire.visible) this.fire.scale.set(1, 0.8 + Math.sin(this.time * 18) * 0.2, 1);
@@ -863,8 +996,8 @@ export class GameRenderer {
       const x = st.cx + 0.5;
       const z = st.cz + 0.5;
       if (st.built < 1) {
-        const h = 0.2 + st.built * 1.2;
-        this.blueprint.add(x, h / 2, z, 0, 0.95, h, 0.95);
+        const tall = st.type === 'tower' ? 3.4 : st.type === 'wall' ? 1.5 : 1.1;
+        this.blueprint.add(x, 0, z, 0, 1.08, 0.35 + st.built * tall, 1.08);
         if (st.built > 0) this.structs[st.type].add(x, 0, z, 0, 1, Math.max(0.05, st.built), 1, 0xb0b0b0);
         continue;
       }
@@ -922,16 +1055,17 @@ export class GameRenderer {
       if (st.type !== 'torch' || st.built < 1) continue;
       const f = 0.85 + Math.sin(this.time * 17 + st.id) * 0.15 + Math.sin(this.time * 29 + st.id * 3) * 0.08;
       const y = this.models ? 1.45 : 1.55;
-      this.torchFlames.add(st.cx + 0.5, y, st.cz + 0.5, this.time * 2 + st.id, 0.9 * f, 1.5 * f, 0.9 * f, n > 0.2 ? 0xffa040 : 0xc87830);
-      if (n > 0.4 && Math.random() < dt * 3) {
-        this.particles.push({ x: st.cx + 0.5, y: y + 0.2, z: st.cz + 0.5, vx: (Math.random() - 0.5) * 0.4, vy: 1.6, vz: (Math.random() - 0.5) * 0.4, age: 0, life: 0.7, size: 0.12, grow: -0.1, color: 0xffd060 });
-      }
+      // A small core plus licking flame particles (they bloom at night).
+      this.torchFlames.add(st.cx + 0.5, y, st.cz + 0.5, this.time * 2 + st.id, 0.5 * f, 0.8 * f, 0.5 * f, n > 0.2 ? 0xffa040 : 0xc87830);
+      if (dt > 0 && Math.random() < 0.8) this.fxp.flame(st.cx + 0.5, y, st.cz + 0.5, 0.8);
     }
     this.torchFlames.end();
     this.updateParticles(dt);
+    this.fxp.update(dt);
     this.updateProjectiles(dt);
     this.updateFx(dt);
-    this.renderer.render(this.scene, this.camera);
+    if (this.post) this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
   }
 
   private updateGround(seed: number, cx: number): void {
@@ -970,7 +1104,8 @@ export class GameRenderer {
   /** Grass, flowers, mushrooms, pebbles and logs. Deterministic per chunk; rebuilt only when the view shifts a chunk. */
   private placeDecor(seed: number, first: number): void {
     if (this.decor.size === 0) return;
-    const key = `${seed}:${first}`;
+    const low = !this.renderer.shadowMap.enabled;
+    const key = `${seed}:${first}:${low}`;
     if (key === this.decorKey) return;
     this.decorKey = key;
     for (const v of this.decor.values()) v.begin();
@@ -984,7 +1119,7 @@ export class GameRenderer {
       const chunk = first + i;
       const terrain = chunkTerrain(seed, chunk);
       // The meadow itself is the Grass carpet; these are the flowers, mushrooms and pebbles in it.
-      const count = terrain === 'forest' ? 220 : terrain === 'plains' ? 240 : 60;
+      const count = (terrain === 'forest' ? 220 : terrain === 'plains' ? 240 : 60) * (low ? 0.4 : 1);
       const maxZ = terrain === 'canyon' ? BALANCE.world.canyonCliffZ - 0.5 : 46;
       const x0 = chunkCenter(chunk) - L / 2;
       for (let k = 0; k < count; k++) {
@@ -1110,6 +1245,7 @@ export class GameRenderer {
       const pitch = -Math.atan2(dy, len);
       this.arrowMesh.add(x, y, z, yaw, 1, 1, 1, undefined, pitch);
     }
+    for (const p of this.projectiles) if (p.t >= p.ttl && p.kind !== 'spit') this.fxp.thud(p.b.x, p.b.z);
     this.projectiles = this.projectiles.filter((p) => p.t < p.ttl);
     this.arrowMesh.end();
     this.spitMesh.end();
@@ -1134,11 +1270,11 @@ export class GameRenderer {
   /** Ballast bed, sleepers and two steel rails. Built once around x = 0 and slid along with the camera. */
   private buildRailway(): THREE.Group {
     const g = new THREE.Group();
-    const bed = new THREE.Mesh(new THREE.BoxGeometry(RAIL_LEN, 0.12, RAIL_Z * 2 + 1.6), new THREE.MeshLambertMaterial({ color: 0x8c8274 }));
+    const bed = new THREE.Mesh(new THREE.BoxGeometry(RAIL_LEN, 0.12, RAIL_Z * 2 + 1.6), sharedStandard({ color: 0x8c8274, roughness: 0.97 }));
     bed.position.y = 0.0;
     g.add(bed);
     const n = RAIL_LEN;
-    const sleepers = new THREE.InstancedMesh(new THREE.BoxGeometry(0.5, 0.12, RAIL_Z * 2 + 1.0), new THREE.MeshLambertMaterial({ color: 0x5a3e28 }), n);
+    const sleepers = new THREE.InstancedMesh(new THREE.BoxGeometry(0.5, 0.12, RAIL_Z * 2 + 1.0), sharedStandard({ color: 0x5a3e28, roughness: 0.9 }), n);
     const m = new THREE.Matrix4();
     for (let i = 0; i < n; i++) {
       m.makeTranslation(i - n / 2 + 0.5, 0.1, 0);
@@ -1146,7 +1282,7 @@ export class GameRenderer {
     }
     sleepers.frustumCulled = false;
     g.add(sleepers);
-    const steel = new THREE.MeshLambertMaterial({ color: 0xb4b8c0 });
+    const steel = sharedStandard({ color: 0xb4b8c0, roughness: 0.32, metalness: 0.85 });
     for (const z of [-RAIL_Z, RAIL_Z]) {
       const rail = new THREE.Mesh(new THREE.BoxGeometry(RAIL_LEN, 0.14, 0.14), steel);
       rail.position.set(0, 0.22, z);
@@ -1162,7 +1298,9 @@ export class GameRenderer {
   private placeScenery(seed: number, chunk: number, terrain: 'plains' | 'forest' | 'canyon'): void {
     const L = BALANCE.world.chunkLength;
     const x0 = chunkCenter(chunk) - L / 2;
+    const low = !this.renderer.shadowMap.enabled;
     for (let k = 0; k < 12; k++) {
+      if (low && k % 2) continue; // weak device: half the far woods
       const h = (salt: number) => hash01(seed, chunk, k, salt);
       const side = k % 3 === 0 ? 1 : -1;
       const z = side * (42 + h(1) * 16);
