@@ -12,8 +12,8 @@ import {
 } from '../data/balance';
 import { t, type MessageKey } from '../i18n';
 import type { GameRenderer } from '../render/renderer';
-import { canAfford, groupCounts, popCap, popUsed, score, slotCount, synergySlots, SLOT_POS, type Sim } from '../sim/sim';
-import type { Command, GameEvent } from '../sim/types';
+import { canAfford, foodDawns, groupCounts, incomePerMin, popCap, popUsed, resourcePctOf, score, slotCount, synergySlots, SLOT_POS, type Sim } from '../sim/sim';
+import type { Command, GameEvent, LaborRes } from '../sim/types';
 
 export type Mode =
   | { kind: 'none' }
@@ -95,6 +95,9 @@ export class Hud {
   private fps = el('div', 'fps');
   private rooms: HTMLElement;
   private build: HTMLElement;
+  private eco: HTMLElement;
+  private ecoSig = '';
+  private foodEl = el('div', 'tb-food');
   private dawn: HTMLElement;
   private over: HTMLElement;
   private roomSig = '';
@@ -124,6 +127,7 @@ export class Hud {
     }
     this.popEl.title = t('hud.pop');
     res.appendChild(this.popEl);
+    res.appendChild(this.foodEl);
     const bars = el('div', 'tb-bars');
     const coreWrap = el('div', 'bar');
     coreWrap.append(this.coreBar, this.coreTxt);
@@ -171,7 +175,11 @@ export class Hud {
     setLabel(this.selectBtn, '⬚', t('hud.selectMode'));
     this.selectBtn.title = t('hud.selectModeHelp');
     this.selectBtn.onclick = () => ctl.toggleSelectMode();
-    actions.append(this.selectBtn, buildBtn, roomsBtn, recallBtn, this.runBtn);
+    const ecoBtn = el('button', 'btn');
+    setLabel(ecoBtn, '📦', t('hud.economy'));
+    ecoBtn.title = t('eco.help');
+    ecoBtn.onclick = () => this.toggleEco();
+    actions.append(this.selectBtn, ecoBtn, buildBtn, roomsBtn, recallBtn, this.runBtn);
     const release = el('button', 'btn small', `↺ ${t('hud.release')}`);
     release.onclick = () => ctl.send({ t: 'releaseUnits' });
     const deselect = el('button', 'btn small', `✕ ${t('hud.deselect')}`);
@@ -181,10 +189,11 @@ export class Hud {
 
     this.rooms = el('div', 'panel rooms hidden');
     this.build = el('div', 'panel build hidden');
+    this.eco = el('div', 'panel eco hidden');
     this.dawn = el('div', 'modal dawn hidden');
     this.over = el('div', 'modal over hidden');
     this.pauseBanner.textContent = t('hud.paused');
-    this.root.append(top, this.box, this.pickBar, this.arrows, this.hint, this.toasts, this.pauseBanner, bottom, this.rooms, this.build, this.dawn, this.over, this.fps);
+    this.root.append(top, this.box, this.pickBar, this.arrows, this.hint, this.toasts, this.pauseBanner, bottom, this.rooms, this.build, this.eco, this.dawn, this.over, this.fps);
   }
 
   private sim!: Sim;
@@ -213,7 +222,14 @@ export class Hud {
   }
 
   get panelOpen(): boolean {
-    return !this.rooms.classList.contains('hidden') || !this.build.classList.contains('hidden');
+    return [this.rooms, this.build, this.eco].some((p) => !p.classList.contains('hidden'));
+  }
+
+  toggleEco(force?: boolean): void {
+    const open = force ?? this.eco.classList.contains('hidden');
+    this.closePanels();
+    this.eco.classList.toggle('hidden', !open);
+    this.ecoSig = '';
   }
 
   get modalOpen(): boolean {
@@ -222,22 +238,23 @@ export class Hud {
 
   toggleRooms(force?: boolean): void {
     const open = force ?? this.rooms.classList.contains('hidden');
+    this.closePanels();
     this.rooms.classList.toggle('hidden', !open);
-    this.build.classList.add('hidden');
     this.roomSig = '';
     this.selectedSlot = -1;
   }
 
   toggleBuild(force?: boolean): void {
     const open = force ?? this.build.classList.contains('hidden');
+    this.closePanels();
     this.build.classList.toggle('hidden', !open);
-    this.rooms.classList.add('hidden');
     this.buildSig = '';
   }
 
   closePanels(): void {
     this.rooms.classList.add('hidden');
     this.build.classList.add('hidden');
+    this.eco.classList.add('hidden');
   }
 
   toast(text: string, level: GameEvent['level'] = 'info'): void {
@@ -266,6 +283,12 @@ export class Hud {
     this.topPhase.className = `tb-phase ${s.phase}`;
     for (const r of ['wood', 'stone', 'food', 'gold'] as Res[]) this.resEls[r].textContent = `${RES_ICON[r]} ${Math.floor(s.res[r])}`;
     this.popEl.textContent = `👥 ${s.units.length}/${popCap(s)}`;
+    // Food forecast: how many dawns the stock still covers (GDD v1.2 §6.5).
+    const dawns = foodDawns(s);
+    const foodTxt = dawns >= 9 ? t('hud.foodOk') : t('hud.foodDawns', { n: dawns });
+    if (this.foodEl.textContent !== foodTxt) this.foodEl.textContent = foodTxt;
+    this.foodEl.classList.toggle('bad', dawns < 2);
+    this.foodEl.title = t('eco.foodNeed', { need: s.units.length * BALANCE.foodPerUnit });
     const core = c.coreHp / c.coreMax;
     this.coreBar.style.width = `${core * 100}%`;
     this.coreBar.classList.toggle('low', core < BALANCE.warnings.coreLow);
@@ -334,6 +357,7 @@ export class Hud {
     this.updateArrows(sim, renderer, w, h);
     if (!this.rooms.classList.contains('hidden')) this.renderRooms(sim);
     if (!this.build.classList.contains('hidden')) this.renderBuild(sim);
+    if (!this.eco.classList.contains('hidden')) this.renderEco(sim);
     this.renderDawn(sim);
     this.renderOver(sim);
 
@@ -462,6 +486,46 @@ export class Hud {
       const type = r.queue[0];
       fill.style.width = type ? `${(r.progress / BALANCE.units[type].train) * 100}%` : '0%';
     }
+  }
+
+  private renderEco(sim: Sim): void {
+    const s = sim.state;
+    const resList: LaborRes[] = ['food', 'wood', 'stone'];
+    const rows = resList.map((r) => ({
+      r,
+      p: s.labor[r],
+      inc: incomePerMin(s, r),
+      workers: s.units.filter((u) => u.type === 'peasant' && !u.inside && (u.workRes === r || (u.order && u.carryRes === r))).length,
+      left: Math.round(resourcePctOf(s, s.castle.x, r) * 100),
+    }));
+    const sig = JSON.stringify([rows, foodDawns(s), s.units.length]);
+    if (sig === this.ecoSig) return;
+    this.ecoSig = sig;
+    this.eco.replaceChildren();
+    const head = el('div', 'panel-head');
+    head.append(el('div', 'panel-title', t('eco.title')));
+    const close = el('button', 'btn small', '✕');
+    close.onclick = () => this.toggleEco(false);
+    head.append(close);
+    this.eco.append(head, el('div', 'panel-sub', t('eco.help')));
+    for (const row of rows) {
+      const line = el('div', 'eco-row');
+      const name = el('div', 'eco-name');
+      name.append(el('b', '', `${RES_ICON[row.r]} ${t(`res.${row.r}` as MessageKey)}`), el('small', '', `${t('eco.perMin', { n: row.inc })} · ${t('eco.workers', { n: row.workers })} · ${t('eco.left', { pct: row.left })}`));
+      const prio = el('div', 'eco-prio');
+      for (let p = 0; p <= 3; p++) {
+        const b = el('button', 'btn tiny', t(`eco.p${p}` as MessageKey));
+        b.classList.toggle('on', row.p === p);
+        b.onclick = () => this.ctl.send({ t: 'setLabor', res: row.r, priority: p });
+        prio.append(b);
+      }
+      line.append(name, prio);
+      if (row.p > 0 && row.left === 0) line.append(el('div', 'warn small-warn', t('eco.none', { res: row.r })));
+      this.eco.append(line);
+    }
+    const need = s.units.length * BALANCE.foodPerUnit;
+    const dawns = foodDawns(s);
+    this.eco.append(el('div', dawns < 2 ? 'warn' : 'panel-sub', t('eco.food', { n: dawns, need })));
   }
 
   private renderBuild(sim: Sim): void {

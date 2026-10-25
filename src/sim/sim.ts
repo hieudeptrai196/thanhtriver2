@@ -28,6 +28,8 @@ import { CASTLE, CLIFF, NavGrid, STRUCT } from './grid';
 import { nextRandom, pickIndex, range, shuffle } from './rng';
 import type {
   Command,
+  Drop,
+  LaborRes,
   GameEvent,
   GameState,
   Monster,
@@ -128,6 +130,10 @@ export function createState(seed: number): GameState {
     strangerDone: true,
     hunger: 0,
     history: [],
+    labor: { ...BALANCE.economy.laborDefault },
+    drops: [],
+    deliveries: [],
+    repairDebt: 0,
     fireDone: false,
     newRegion: false,
   };
@@ -157,6 +163,7 @@ function addUnit(s: GameState, type: UnitType, pos: Vec): Unit {
     cooldown: 0,
     inside: false,
     slot: s.units.length,
+    workRes: null,
   };
   s.units.push(u);
   return u;
@@ -286,6 +293,18 @@ export function distToCastle(s: GameState, x: number, z: number): number {
   return Math.hypot(dx, dz);
 }
 
+/** Share of one resource left around x. */
+export function resourcePctOf(s: GameState, x: number, res: Res, radius = 30): number {
+  let amount = 0;
+  let max = 0;
+  for (const n of s.nodes) {
+    if (Math.abs(n.x - x) > radius || BALANCE.world.nodeRes[n.type] !== res) continue;
+    amount += n.amount;
+    max += n.max;
+  }
+  return max > 0 ? amount / max : 0;
+}
+
 export function resourcePct(s: GameState, x: number, radius = 30): number {
   let amount = 0;
   let max = 0;
@@ -341,6 +360,10 @@ export class Sim {
     state.selectedIds ??= [];
     state.hunger ??= 0;
     state.history ??= [];
+    state.labor ??= { ...BALANCE.economy.laborDefault };
+    state.drops ??= [];
+    state.deliveries ??= [];
+    state.repairDebt ??= 0;
     state.nightStats = { ...emptyNightStats(), ...state.nightStats };
     this.state = state;
     this.grid.rebuild(state);
@@ -394,6 +417,10 @@ export class Sim {
       }
       case 'releaseUnits':
         this.releaseUnits();
+        break;
+      case 'setLabor':
+        s.labor[c.res] = Math.max(0, Math.min(3, Math.round(c.priority)));
+        for (const u of s.units) if (u.type === 'peasant' && !u.order) u.workRes = null;
         break;
       case 'order':
         this.order(c.pos, c.targetId);
@@ -713,6 +740,10 @@ export class Sim {
     this.lightCache = lights(s);
 
     for (const k of Object.keys(s.cooldowns) as AbilityId[]) s.cooldowns[k] = Math.max(0, s.cooldowns[k] - DT);
+    if (s.drops.length) {
+      for (const d of s.drops) d.ttl -= DT;
+      s.drops = s.drops.filter((d) => d.ttl > 0 && d.amount > 0);
+    }
 
     this.updateCastle();
     this.updateRooms();
@@ -1094,6 +1125,26 @@ export class Sim {
       }
       return;
     }
+    // A load dropped on the ground is picked up first.
+    let drop = u.targetId >= 0 ? s.drops.find((d) => d.id === u.targetId) : undefined;
+    if (!drop && !u.order) drop = this.nearestDrop(u);
+    if (drop) {
+      u.targetId = drop.id;
+      u.job = 'gather';
+      if (u.carry > 0 && u.carryRes !== drop.res) {
+        u.job = 'deliver';
+        if (this.walkTo(u, s.castle.x, s.castle.z, 0.6, true)) this.deliver(u);
+        return;
+      }
+      if (!this.walkTo(u, drop.x, drop.z, 0.8)) return;
+      const take = Math.min(cap - u.carry, drop.amount);
+      drop.amount -= take;
+      u.carry += take;
+      u.carryRes = drop.res;
+      if (drop.amount <= 0) s.drops = s.drops.filter((d) => d !== drop);
+      u.targetId = -1;
+      return;
+    }
     let node = u.targetId >= 0 ? s.nodes.find((n) => n.id === u.targetId) : undefined;
     if (!node || node.amount <= 0) {
       const from = u.order?.kind === 'gather' ? u.order.pos : { x: s.castle.x, z: s.castle.z };
@@ -1128,32 +1179,77 @@ export class Sim {
     }
   }
 
-  private nearestNode(from: Vec, u: Unit): ResourceNode | undefined {
-    const s = this.state;
-    let best: ResourceNode | undefined;
-    let bestD = Infinity;
-    const limit = this.grid.size / 2 - 2;
-    for (const n of s.nodes) {
-      if (n.amount <= 0) continue;
-      if (Math.abs(n.x - s.castle.x) > limit) continue;
-      if (isDark(s) && !isLit(s, this.lightCache, n.x, n.z)) continue;
-      // Spread peasants a bit: crowded nodes look further away.
-      let crowd = 0;
-      for (const o of s.units) if (o !== u && o.targetId === n.id) crowd++;
-      // Idle peasants lean towards whatever the stockpile is short of.
-      const stock = s.res[BALANCE.world.nodeRes[n.type]] * BALANCE.world.stockBias;
-      const d = Math.hypot(n.x - from.x, n.z - from.z) + crowd * 3 + (u.order ? 0 : stock);
-      if (d < bestD) {
-        bestD = d;
-        best = n;
+  private nearestDrop(u: Unit): Drop | undefined {
+    let best: Drop | undefined;
+    let bestD = 25;
+    for (const d of this.state.drops) {
+      if (this.state.units.some((o) => o !== u && o.targetId === d.id)) continue;
+      const dist = Math.hypot(d.x - u.x, d.z - u.z);
+      if (dist < bestD) {
+        bestD = dist;
+        best = d;
       }
     }
     return best;
   }
 
+  /**
+   * Labour policy (GDD v1.2 §6.3): each free peasant takes the resource with the best
+   * priority-per-worker, food counting double when fewer than two dawns are covered.
+   */
+  private assignWork(u: Unit): LaborRes[] {
+    const s = this.state;
+    const order: LaborRes[] = ['food', 'wood', 'stone'];
+    const score = (r: LaborRes) => {
+      const p = s.labor[r];
+      if (p <= 0) return -1;
+      const need = r === 'food' && foodDawns(s) < 2 ? BALANCE.economy.hungryFoodWeight : 1;
+      let workers = 0;
+      for (const o of s.units) if (o !== u && o.type === 'peasant' && !o.order && o.workRes === r) workers++;
+      return (p * need) / (1 + workers);
+    };
+    return order.filter((r) => score(r) >= 0).sort((a, b) => score(b) - score(a) || order.indexOf(a) - order.indexOf(b));
+  }
+
+  private nearestNode(from: Vec, u: Unit): ResourceNode | undefined {
+    const s = this.state;
+    const limit = this.grid.size / 2 - 2;
+    // Hand-ordered peasants take whatever is nearest their flag; the rest follow the labour policy.
+    const wanted: (LaborRes | null)[] = u.order ? [null] : this.assignWork(u);
+    for (const res of wanted) {
+      let best: ResourceNode | undefined;
+      let bestD = Infinity;
+      for (const n of s.nodes) {
+        if (n.amount <= 0) continue;
+        if (res && BALANCE.world.nodeRes[n.type] !== res) continue;
+        if (Math.abs(n.x - s.castle.x) > limit) continue;
+        if (isDark(s) && !isLit(s, this.lightCache, n.x, n.z)) continue;
+        // Spread peasants a bit: crowded nodes look further away.
+        let crowd = 0;
+        for (const o of s.units) if (o !== u && o.targetId === n.id) crowd++;
+        const d = Math.hypot(n.x - from.x, n.z - from.z) + crowd * 3;
+        if (d < bestD) {
+          bestD = d;
+          best = n;
+        }
+      }
+      if (best) {
+        u.workRes = res ?? (BALANCE.world.nodeRes[best.type] as LaborRes);
+        return best;
+      }
+      if (res && s.tick % (BALANCE.tickRate * 30) === 0) this.emit('msg.noNodes', { params: { res }, level: 'warn' });
+    }
+    u.workRes = null;
+    return undefined;
+  }
+
   private deliver(u: Unit): void {
     if (u.carry > 0 && u.carryRes) {
-      this.state.res[u.carryRes] += u.carry;
+      const s = this.state;
+      s.res[u.carryRes] += u.carry;
+      s.deliveries.push({ tick: s.tick, res: u.carryRes, n: u.carry });
+      const since = s.tick - BALANCE.economy.incomeWindow * BALANCE.tickRate;
+      if (s.deliveries[0].tick < since) s.deliveries = s.deliveries.filter((d) => d.tick >= since);
       this.emit('fx.deliver', { pos: { x: u.x, z: u.z }, params: { res: u.carryRes, n: u.carry } });
     }
     u.carry = 0;
@@ -1167,7 +1263,9 @@ export class Sim {
     if (u.targetId === -1 || !this.builderTargetValid(u.targetId)) {
       u.targetId = -1;
       u.work = 0;
+      // GDD v1.2 §6.3: emergency castle repair > fire > construction > outer repairs.
       if (u.order?.kind === 'repair' && u.order.targetId !== undefined && this.builderTargetValid(u.order.targetId)) u.targetId = u.order.targetId;
+      else if (c.wallHp / c.wallMax < BALANCE.emergencyWall && s.res.wood > 0) u.targetId = T_WALL;
       else if (c.fire > 0) u.targetId = T_FIRE;
       else {
         const blueprint = this.nearestStruct(u, (st) => st.built < 1 && !st.dismantle);
@@ -1194,8 +1292,8 @@ export class Sim {
           u.targetId = -1;
           this.emit('msg.fireOut', { level: 'info' });
         }
-      } else if (t === T_WALL) c.wallHp = Math.min(c.wallMax, c.wallHp + rate * DT);
-      else c.wheelHp = Math.min(c.wheelMax, c.wheelHp + rate * DT);
+      } else if (t === T_WALL) c.wallHp = Math.min(c.wallMax, c.wallHp + this.payRepair(rate * DT));
+      else c.wheelHp = Math.min(c.wheelMax, c.wheelHp + this.payRepair(rate * DT));
       return;
     }
     const st = s.structs.find((x) => x.id === t)!;
@@ -1224,9 +1322,24 @@ export class Sim {
       }
     } else {
       u.job = 'repair';
-      st.hp = Math.min(st.maxHp, st.hp + rate * DT);
+      st.hp = Math.min(st.maxHp, st.hp + this.payRepair(rate * DT));
       if (st.hp >= st.maxHp) u.targetId = -1;
     }
+  }
+
+  /** Repairs cost wood (GDD v1.2 §5.1). Returns how much of `hp` could be paid for. */
+  private payRepair(hp: number): number {
+    const s = this.state;
+    if (s.res.wood <= 0 && s.repairDebt >= 1) {
+      if (s.tick % (BALANCE.tickRate * 20) === 0) this.emit('msg.noWoodRepair', { level: 'warn' });
+      return 0;
+    }
+    s.repairDebt += hp * BALANCE.repairWoodPerHp;
+    while (s.repairDebt >= 1 && s.res.wood > 0) {
+      s.res.wood--;
+      s.repairDebt--;
+    }
+    return hp;
   }
 
   private builderTargetValid(t: number): boolean {
@@ -1595,6 +1708,12 @@ export class Sim {
     u.hp -= dmg;
     if (u.hp > 0) return;
     const st = this.state.nightStats;
+    if (u.carry > 0 && u.carryRes) {
+      // The load falls where they fell; it can be picked up for a while.
+      this.state.drops.push({ id: this.state.nextId++, x: u.x, z: u.z, res: u.carryRes, amount: u.carry, ttl: BALANCE.economy.dropTtl });
+      u.carry = 0;
+      this.emit('msg.cargoDropped', { params: { res: u.carryRes }, pos: { x: u.x, z: u.z }, level: 'warn' });
+    }
     st.lost++;
     st.lostByType[u.type] = (st.lostByType[u.type] ?? 0) + 1;
     if (!st.cause && (u.type === 'peasant' || u.type === 'builder') && this.state.phase === 'night') st.cause = 'workersCaught';
@@ -1751,6 +1870,14 @@ export class Sim {
 /** Compass side of an offset from the castle (north is -z). */
 export function dirOf(dx: number, dz: number): Dir {
   return Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? 'E' : 'W') : dz > 0 ? 'S' : 'N';
+}
+
+/** Delivered per minute over the last income window. */
+export function incomePerMin(s: GameState, res: Res): number {
+  const since = s.tick - BALANCE.economy.incomeWindow * BALANCE.tickRate;
+  let n = 0;
+  for (const d of s.deliveries) if (d.res === res && d.tick >= since) n += d.n;
+  return Math.round((n * 60) / BALANCE.economy.incomeWindow);
 }
 
 export function groupCounts(s: GameState): Record<UnitType, number> {

@@ -82,3 +82,48 @@ describe('economy', () => {
     for (const n of targets) expect(Math.hypot(n.x - far.x, n.z - far.z)).toBeLessThan(15);
   });
 });
+
+describe('labour policy and cargo', () => {
+  it('priority Off keeps peasants away from that resource', () => {
+    const sim = Sim.create(60);
+    const s = sim.state;
+    sim.apply([{ t: 'setLabor', res: 'wood', priority: 0 }, { t: 'setLabor', res: 'stone', priority: 0 }, { t: 'setLabor', res: 'food', priority: 3 }]);
+    const before = { ...s.res };
+    runSeconds(sim, 50);
+    expect(s.res.food).toBeGreaterThan(before.food);
+    expect(s.res.wood).toBeLessThanOrEqual(before.wood); // repairs may spend wood, nobody gathers it
+    expect(s.res.stone).toBe(before.stone);
+  });
+
+  it('a carried load drops where the peasant dies and only counts once delivered', () => {
+    const sim = Sim.create(61);
+    const s = sim.state;
+    const p = s.units.find((u) => u.type === 'peasant')!;
+    p.carry = 7;
+    p.carryRes = 'wood';
+    const wood = s.res.wood;
+    p.hp = 1;
+    // A monster bite kills it.
+    s.monsters.push({ id: s.nextId++, type: 'fast', x: p.x + 0.5, z: p.z, hp: 50, maxHp: 50, dmgMult: 1, cooldown: 0, targetId: -1, slamTimer: 0, slamAt: null, wander: false });
+    runSeconds(sim, 0.2);
+    expect(s.units.includes(p)).toBe(false);
+    expect(s.drops.length).toBe(1);
+    expect(s.drops[0].amount).toBe(7);
+    expect(s.res.wood).toBe(wood);
+  });
+
+  it('repairs cost wood and stop when it runs out', () => {
+    const sim = Sim.create(62);
+    const s = sim.state;
+    s.units = s.units.filter((u) => u.type === 'builder'); // nobody brings wood in
+    s.castle.wallHp = 100;
+    s.res.wood = 0;
+    s.repairDebt = 1;
+    runSeconds(sim, 10);
+    expect(s.castle.wallHp).toBe(100);
+    s.res.wood = 20;
+    runSeconds(sim, 30);
+    expect(s.castle.wallHp).toBeGreaterThan(100);
+    expect(s.res.wood).toBeLessThan(20);
+  });
+});

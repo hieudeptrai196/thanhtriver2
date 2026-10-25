@@ -412,6 +412,39 @@ body {
     bottom: 64px;
   }
 }
+.tb-food {
+  font-size: 12px;
+  color: var(--muted);
+  align-self: center;
+}
+.tb-food.bad {
+  color: var(--bad);
+  font-weight: 700;
+}
+.eco-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.eco-name {
+  display: flex;
+  flex-direction: column;
+}
+.eco-name small {
+  color: var(--muted);
+}
+.eco-prio {
+  display: flex;
+  gap: 4px;
+}
+.small-warn {
+  width: 100%;
+  font-size: 12px;
+}
 .fps {
   position: absolute;
   right: 10px;

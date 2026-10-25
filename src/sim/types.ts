@@ -42,7 +42,19 @@ export interface Unit {
   cooldown: number;
   inside: boolean; // sheltered inside the castle
   slot: number; // follow slot around the castle while moving
+  workRes: Res | null; // resource the labour AI assigned this peasant to
 }
+
+export interface Drop {
+  id: number;
+  x: number;
+  z: number;
+  res: Res;
+  amount: number;
+  ttl: number;
+}
+
+export type LaborRes = 'food' | 'wood' | 'stone';
 
 export interface Monster {
   id: number;
@@ -183,6 +195,10 @@ export interface GameState {
   nightStats: NightStats;
   strangerDone: boolean;
   hunger: number; // dawns in a row without enough food
+  labor: Record<LaborRes, number>; // 0 = none … 3 = high
+  drops: Drop[];
+  deliveries: { tick: number; res: Res; n: number }[];
+  repairDebt: number; // wood owed for repairs, paid a whole unit at a time
   history: NightRecord[];
   fireDone: boolean;
   newRegion: boolean;
@@ -208,6 +224,7 @@ export type Command =
   | { t: 'selectGroup'; group: number }
   | { t: 'selectUnits'; ids: number[] }
   | { t: 'releaseUnits' }
+  | { t: 'setLabor'; res: LaborRes; priority: number }
   | { t: 'order'; pos: Vec; targetId?: number }
   | { t: 'orderAll'; kind: 'home' }
   | { t: 'build'; type: StructType; pos: Vec }

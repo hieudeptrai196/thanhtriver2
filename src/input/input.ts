@@ -232,6 +232,9 @@ export class Input {
         e.preventDefault();
         this.hud.toggleRooms();
         break;
+      case 'KeyK':
+        this.hud.toggleEco();
+        break;
       case 'KeyB':
         this.hud.toggleBuild();
         break;

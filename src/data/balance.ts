@@ -93,7 +93,7 @@ export const BALANCE = {
     // Terrain weights for chunks after the first one.
     terrainWeights: { plains: 4, forest: 3, canyon: 2 } as Record<TerrainType, number>,
     spawnDistance: 37,
-    stockBias: 0.08, // idle gatherers treat each unit of stock as this much extra distance
+
   },
 
   castle: {
@@ -163,6 +163,14 @@ export const BALANCE = {
     torch: { cost: { wood: 8 } as Cost, hp: 40, work: 2, blocks: false, light: 7 },
   } as Record<StructType, { cost: Cost; hp: number; work: number; blocks: boolean; light: number; dmg?: number; range?: number; cooldown?: number }>,
   refundShare: 0.3,
+  repairWoodPerHp: 0.08, // repairs cost wood; no wood, no repairs
+  emergencyWall: 0.35, // builders drop everything to patch the castle wall below this share
+  economy: {
+    laborDefault: { food: 2, wood: 2, stone: 1 } as Record<'food' | 'wood' | 'stone', number>,
+    dropTtl: 120, // seconds a dropped load stays on the ground
+    incomeWindow: 60, // seconds averaged for the income readout
+    hungryFoodWeight: 2, // food priority doubles when fewer than two dawns are covered
+  },
   dismantleWork: 2,
   wallPathCost: 9, // flow-field cost for walking through a wall (monsters smash it)
 
