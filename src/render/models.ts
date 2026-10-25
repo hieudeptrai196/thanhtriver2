@@ -31,9 +31,6 @@ export type PropName =
   | 'groveB';
 
 export type DecorName =
-  | 'grass'
-  | 'grassLarge'
-  | 'grassLeafs'
   | 'flowerRed'
   | 'flowerYellow'
   | 'flowerPurple'
@@ -111,9 +108,6 @@ export interface Models {
 
 // Kenney Nature Kit pieces, sized for the scene.
 const DECOR_SIZE: Record<DecorName, ['h' | 'w', number]> = {
-  grass: ['h', 0.5],
-  grassLarge: ['h', 0.75],
-  grassLeafs: ['h', 0.55],
   flowerRed: ['h', 0.45],
   flowerYellow: ['h', 0.45],
   flowerPurple: ['h', 0.45],

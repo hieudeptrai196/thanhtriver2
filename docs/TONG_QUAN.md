@@ -188,7 +188,7 @@ Tòa thành là "pháo đài trên đường ray": sàn gỗ có bánh tàu, tư
 một tầng) và mỗi phòng là một ngôi nhà nhỏ trên sàn (gỗ ở tier 1, đá ở tier 2); ống khói đá nhả khói khi chạy. Tông
 màu trung cổ: cỏ ô-liu, đất nâu, gỗ sẫm, đá xám, mái đỏ gỉ; giao diện gỗ – da – viền đồng. Ngoài đồng có cối xay gió,
 ruộng lúa, mỏ đá, xác máy công thành; mỗi đoạn đường có một làng nhỏ với ruộng cày, ruộng lúa và đường đất
-xuống đường ray, cùng tàn tích tường thành cũ. Quân và quái không đi xuyên tường gỗ, vách đá hay lâu đài (kể cả khi
+xuống đường ray, cùng tàn tích tường thành cũ. Đồng cỏ phủ kín, lay theo gió (thấp quanh trại, cao ra xa, ruộng lúa vàng; máy yếu giảm một nửa). Quân và quái không đi xuyên tường gỗ, vách đá hay lâu đài (kể cả khi
 lâu đài đang chạy); cung thủ đứng sau lỗ châu mai trên tường. Ảnh chụp: [docs/screenshots](screenshots). Đêm có ánh trăng xanh, vùng sáng ấm, đuốc bập bùng; giao tranh có tên bay, chớp
 sáng khi trúng đòn, xác ngã. Giao diện cố tình ít chữ: biểu tượng và số, giải thích nằm trong tooltip. KayKit (Kay
 Lousberg) cho nhân vật, quái, cây, đá, đồi núi; Kenney (Nature, Castle, Fantasy Town Kit) cho cỏ, hoa, ruộng, tường

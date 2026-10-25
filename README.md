@@ -73,6 +73,8 @@ lên sàn thành. Lệnh tay đè lên việc tự động cho tới khi bấm *
   ngôi nhà nhỏ trên sàn (gỗ ở tier 1, đá ở tier 2). Mỗi đoạn đường có một làng nhỏ (nhà, chợ, hàng rào, cối xay) với
   ruộng cày, ruộng lúa và đường đất xuống đường ray; ngoài đồng có tàn tích tường thành, xác máy công thành, đèn lồng
   dọc tuyến, rừng thông trên đồi.
+- Đồng cỏ phủ kín bản đồ, lay theo gió: thấp quanh trại cho dễ nhìn quân, cao và khô dần ra xa, ruộng lúa vàng; máy
+  yếu tự giảm một nửa số cỏ. Vẽ hàng chục nghìn cụm cỏ chỉ trong một lần gọi vẽ.
 - Ảnh chụp trong game: [docs/screenshots](docs/screenshots) (trận đánh đêm, boss, quái, nhân vật, lâu đài, làng).
 - **KayKit** của Kay Lousberg (CC0): nhân vật, xương khô, tường gỗ, cây, đá, đồi núi.
 - **Kenney** (CC0): Nature Kit (cỏ, hoa, nấm, sỏi, ruộng), Castle Kit (tường, tháp, tháp chính, xác máy công thành),

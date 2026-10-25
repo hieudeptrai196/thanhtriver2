@@ -40,9 +40,6 @@ const PROPS = {
 
 // Kenney Nature Kit: ground decoration and crop fields for food nodes.
 const KENNEY = {
-  grass: 'grass',
-  grassLarge: 'grass_large',
-  grassLeafs: 'grass_leafs',
   flowerRed: 'flower_redA',
   flowerYellow: 'flower_yellowA',
   flowerPurple: 'flower_purpleA',

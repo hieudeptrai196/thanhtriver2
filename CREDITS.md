@@ -23,7 +23,7 @@ Kenney!
 
 | Files used | Used in game as |
 | --- | --- |
-| `grass`, `grass_large`, `grass_leafs`, `flower_redA`, `flower_yellowA`, `flower_purpleA`, `mushroom_redGroup`, `mushroom_tanGroup`, `plant_bushSmall`, `rock_smallA`, `log`, `stump_old`, `campfire_logs` | Ground decoration (grass, flowers, mushrooms, pebbles, logs) |
+| `flower_redA`, `flower_yellowA`, `flower_purpleA`, `mushroom_redGroup`, `mushroom_tanGroup`, `plant_bushSmall`, `rock_smallA`, `log`, `stump_old`, `campfire_logs` | Ground decoration (flowers, mushrooms, pebbles, logs) |
 | `crop_pumpkin`, `crops_wheatStageB`, `crops_cornStageD` | Food fields (the food resource nodes) |
 
 ## Kenney Castle Kit and Fantasy Town Kit by Kenney
@@ -62,5 +62,5 @@ meshes so crowds can be drawn with instancing. To rebuild from the original down
 
 ## Everything else
 
-The ground terrain (with its ploughed fields, wheat and village tracks), railway, torches, the castle's timber deck,
+The ground terrain (with its ploughed fields and village tracks), the swaying meadow grass and wheat, railway, torches, the castle's timber deck,
 chimneys and wheels, effects, UI and sounds are made in code for this project. Built with [three.js](https://threejs.org) (MIT) and [Vite](https://vite.dev) (MIT).

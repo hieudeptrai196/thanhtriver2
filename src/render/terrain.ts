@@ -14,7 +14,7 @@ const SEG_Z = 75;
 const PLAY_Z = 40; // flat area: monsters spawn at |z| = 37
 const RAIL_Z = 3.4;
 
-function smooth(t: number): number {
+export function smooth(t: number): number {
   const c = Math.min(1, Math.max(0, t));
   return c * c * (3 - 2 * c);
 }
@@ -35,7 +35,7 @@ export function noise(seed: number, x: number, z: number, scale: number): number
 }
 
 /** How much the ground at x is of one terrain type, blended over 8 units around chunk borders. */
-function terrainWeight(seed: number, x: number, type: TerrainType): number {
+export function terrainWeight(seed: number, x: number, type: TerrainType): number {
   const c = Math.round(x / L);
   const here = chunkTerrain(seed, c) === type ? 1 : 0;
   const edge = x - (chunkCenter(c) - L / 2);

@@ -4,6 +4,7 @@ import { isLit, lights, slotCount, SLOT_POS, type Sim } from '../sim/sim';
 import type { GameEvent, GameState, Vec } from '../sim/types';
 import { hash01 } from '../sim/rng';
 import { chunkCenter, chunkTerrain } from '../sim/world';
+import { Grass } from './grass';
 import { chunkLayout, Terrain, terrainHeight, trackX } from './terrain';
 import {
   castleGeometry,
@@ -209,6 +210,7 @@ export class GameRenderer {
   private sun: THREE.DirectionalLight;
   private pointLights: THREE.PointLight[] = [];
   private terrain: Terrain;
+  private grass: Grass;
   private decor = new Map<DecorName, Instanced>();
   private decorKey = '';
   private crops: Instanced[] = [];
@@ -274,6 +276,7 @@ export class GameRenderer {
     this.scene.fog = new THREE.Fog(0xaabfc6, 60, 140);
 
     this.terrain = new Terrain(this.scene);
+    this.grass = new Grass(this.scene);
     this.hemi = new THREE.HemisphereLight(0xf0e6d4, 0x5e4c34, 1.6);
     this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xffe4bc, 1.9);
@@ -730,6 +733,7 @@ export class GameRenderer {
     this.railway.position.x = Math.round(t.x);
 
     this.updateGround(s.seed, t.x);
+    this.grass.update(s.seed, t.x, this.time, !this.renderer.shadowMap.enabled);
 
     // Castle.
     const c = s.castle;
@@ -972,14 +976,15 @@ export class GameRenderer {
     for (const v of this.decor.values()) v.begin();
     const L = BALANCE.world.chunkLength;
     const pick: [DecorName, number][] = [
-      ['grass', 30], ['grassLarge', 14], ['grassLeafs', 10], ['flowerRed', 5], ['flowerYellow', 6], ['flowerPurple', 5],
+      ['flowerRed', 5], ['flowerYellow', 6], ['flowerPurple', 5],
       ['mushroomRed', 2], ['mushroomTan', 2], ['bushSmall', 6], ['pebble', 8], ['log', 1], ['stumpOld', 1],
     ];
     const total = pick.reduce((a, [, w]) => a + w, 0);
     for (let i = 0; i < 7; i++) {
       const chunk = first + i;
       const terrain = chunkTerrain(seed, chunk);
-      const count = terrain === 'forest' ? 520 : terrain === 'plains' ? 460 : 140;
+      // The meadow itself is the Grass carpet; these are the flowers, mushrooms and pebbles in it.
+      const count = terrain === 'forest' ? 220 : terrain === 'plains' ? 240 : 60;
       const maxZ = terrain === 'canyon' ? BALANCE.world.canyonCliffZ - 0.5 : 46;
       const x0 = chunkCenter(chunk) - L / 2;
       for (let k = 0; k < count; k++) {
@@ -988,7 +993,7 @@ export class GameRenderer {
         if (Math.abs(z) < 3.8) continue; // keep the railway bed clean
         const x = x0 + h(2) * L;
         let r = h(3) * total;
-        let name: DecorName = 'grass';
+        let name: DecorName = 'pebble';
         for (const [n, w] of pick) {
           r -= w;
           if (r < 0) {
@@ -999,14 +1004,7 @@ export class GameRenderer {
         if (terrain === 'canyon' && (name.startsWith('flower') || name.startsWith('mushroom'))) name = 'pebble';
         if (terrain === 'forest' && name === 'flowerYellow') name = 'mushroomTan';
         const sc = 0.75 + h(4) * 0.6;
-        const inst = this.decor.get(name)!;
-        // Grass grows in tufts of a few blades so it reads as patches, not noise.
-        const tuft = name.startsWith('grass') ? 3 : 1;
-        for (let j = 0; j < tuft; j++) {
-          const ox = j ? (h(6 + j) - 0.5) * 0.9 : 0;
-          const oz = j ? (h(9 + j) - 0.5) * 0.9 : 0;
-          inst.add(x + ox, terrainHeight(seed, x + ox, z + oz), z + oz, h(5) * Math.PI * 2 + j, sc * (1 - j * 0.15), sc * (1 - j * 0.15), sc * (1 - j * 0.15), 0xffffff);
-        }
+        this.decor.get(name)!.add(x, terrainHeight(seed, x, z), z, h(5) * Math.PI * 2, sc, sc, sc, 0xffffff);
       }
     }
     for (const v of this.decor.values()) v.end();
