@@ -15,6 +15,7 @@ import {
   unitGeometry,
   wheelGeometry,
 } from './geometry';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { ACT_FRAMES, loadModels, MOVE_FRAMES, type Baked, type CharModel, type DecorName, type Models } from './models';
 
 export interface Overlay {
@@ -24,7 +25,11 @@ export interface Overlay {
 
 const MAX_POINT_LIGHTS = 6;
 // Height of the castle deck where archers stand once the KayKit castle is loaded.
-const WALL_WALK_Y = 1.2;
+const WALL_WALK_Y = 1.9;
+// The castle rides on a train chassis: wheel radius and centre, deck top.
+const WHEEL_R = 0.6;
+const WHEEL_Y = 0.29 + WHEEL_R;
+const DECK_Y = 1.9;
 // Rails sit under the castle's wheels.
 const RAIL_Z = 2.1;
 const RAIL_LEN = 200;
@@ -37,6 +42,8 @@ class Instanced {
   private p = new THREE.Vector3();
   private s = new THREE.Vector3();
   private up = new THREE.Vector3(0, 1, 0);
+  private side = new THREE.Vector3(1, 0, 0);
+  private qt = new THREE.Quaternion();
   private c = new THREE.Color();
 
   constructor(geo: THREE.BufferGeometry, mat: THREE.Material | THREE.Material[], max: number, scene: THREE.Scene, shadow = true) {
@@ -57,9 +64,10 @@ class Instanced {
     this.n = 0;
   }
 
-  add(x: number, y: number, z: number, rot = 0, sx = 1, sy = sx, sz = sx, color?: number | THREE.Color): void {
+  add(x: number, y: number, z: number, rot = 0, sx = 1, sy = sx, sz = sx, color?: number | THREE.Color, tilt = 0): void {
     if (this.n >= this.mesh.instanceMatrix.count) return;
     this.q.setFromAxisAngle(this.up, rot);
+    if (tilt) this.q.multiply(this.qt.setFromAxisAngle(this.side, tilt));
     this.p.set(x, y, z);
     this.s.set(sx, sy, sz);
     this.m.compose(this.p, this.q, this.s);
@@ -109,11 +117,11 @@ class Crowd {
   }
 
   /** `phase` is a running animation clock; each pose cycles through its frames. */
-  add(pose: Pose, phase: number, x: number, y: number, z: number, rot: number, sc: number, color: number): void {
+  add(pose: Pose, phase: number, x: number, y: number, z: number, rot: number, sc: number, color: number | THREE.Color, tilt = 0): void {
     let i = 0;
     if (this.animated && pose === 'move') i = 1 + (Math.floor(phase * MOVE_FRAMES) % MOVE_FRAMES);
     else if (this.animated && pose === 'act') i = 1 + MOVE_FRAMES + (Math.floor(phase * ACT_FRAMES) % ACT_FRAMES);
-    this.slots[i].add(x, y, z, rot, sc, sc, sc, color);
+    this.slots[i].add(x, y, z, rot, sc, sc, sc, color, tilt);
   }
 
   end(): void {
@@ -121,11 +129,47 @@ class Crowd {
   }
 }
 
+/** Short-lived points: smoke from the stacks, flames, sparks. Drawn as shrinking blobs. */
+interface Particle {
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  age: number;
+  life: number;
+  size: number;
+  grow: number;
+  color: number;
+}
+
+interface Projectile {
+  a: Vec;
+  b: Vec;
+  t: number;
+  ttl: number;
+  arc: number;
+  kind: 'arrow' | 'spit' | 'rain';
+}
+
+interface Corpse {
+  crowd: Crowd;
+  x: number;
+  z: number;
+  rot: number;
+  t: number;
+  scale: number;
+  color: number;
+}
+
 interface Motion {
   x: number;
   z: number;
   rot: number;
   moving: number; // seconds since it last moved, for a little hysteresis
+  hp: number;
+  flash: number; // seconds of hit flash left
 }
 
 interface Fx {
@@ -172,6 +216,21 @@ export class GameRenderer {
   private flags: THREE.Group;
   private models: Models | null = null;
   private motion = new Map<number, Motion>();
+  private particles: Particle[] = [];
+  private smokeMesh!: Instanced;
+  private flameMesh!: Instanced;
+  private projectiles: Projectile[] = [];
+  private arrowMesh!: Instanced;
+  private spitMesh!: Instanced;
+  private corpses: Corpse[] = [];
+  private torchFlames!: Instanced;
+  private rods: THREE.Mesh[] = [];
+  private stacks: THREE.Vector3[] = [];
+  private lanterns: THREE.Mesh[] = [];
+  private flashCol = new THREE.Color();
+  private white = new THREE.Color(0xffffff);
+  private smokeTimer = 0;
+  private wheelRoll = 0;
   private blueprint: Instanced;
   private cliffs: Instanced[];
   private glows: Instanced;
@@ -235,19 +294,64 @@ export class GameRenderer {
     this.castle.add(this.castleCode);
     this.flags = new THREE.Group();
     this.castle.add(this.flags);
+    // Train undercarriage: two bogies of two axles per side, on the rails, with coupling rods.
     const wg = wheelGeometry();
-    for (const [x, z] of [[-2.2, -RAIL_Z], [0, -RAIL_Z], [2.2, -RAIL_Z], [-2.2, RAIL_Z], [0, RAIL_Z], [2.2, RAIL_Z]]) {
-      const w = new THREE.Mesh(wg, mat);
-      w.position.set(x, 1.0, z);
-      if (z < 0) w.rotation.y = Math.PI;
-      this.castle.add(w);
-      this.wheels.push(w);
+    const iron = new THREE.MeshLambertMaterial({ color: 0x34343a });
+    const brass = new THREE.MeshLambertMaterial({ color: 0xb08a3a });
+    for (const z of [-RAIL_Z, RAIL_Z]) {
+      for (const x of [-2.7, -1.5, 1.5, 2.7]) {
+        const w = new THREE.Mesh(wg, mat);
+        w.position.set(x, WHEEL_Y, z);
+        w.scale.setScalar(WHEEL_R / 0.7);
+        if (z < 0) w.rotation.y = Math.PI;
+        w.castShadow = true;
+        this.castle.add(w);
+        this.wheels.push(w);
+      }
+      for (const x of [-2.1, 2.1]) {
+        const frame = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.28, 0.22), iron);
+        frame.position.set(x, WHEEL_Y + 0.15, z * 0.86);
+        this.castle.add(frame);
+        const rod = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.09, 0.09), brass);
+        rod.position.set(x, WHEEL_Y, z + Math.sign(z) * 0.2);
+        this.castle.add(rod);
+        this.rods.push(rod);
+      }
+    }
+    const chassis = new THREE.Mesh(new THREE.BoxGeometry(7.0, 0.32, 3.9), iron);
+    chassis.position.y = DECK_Y - 0.36;
+    chassis.castShadow = true;
+    this.castle.add(chassis);
+    // Cowcatcher at the front (+x) and two brass lanterns.
+    const plowGeo = new THREE.ConeGeometry(1.4, 1.1, 4);
+    plowGeo.rotateZ(-Math.PI / 2);
+    plowGeo.rotateX(Math.PI / 4);
+    plowGeo.scale(1, 0.55, 1.6);
+    const plow = new THREE.Mesh(plowGeo, new THREE.MeshLambertMaterial({ color: 0x8a2a20, flatShading: true }));
+    plow.position.set(3.85, 0.62, 0);
+    this.castle.add(plow);
+    for (const z of [-2.2, 2.2]) {
+      const lamp = new THREE.Mesh(new THREE.IcosahedronGeometry(0.2, 0), new THREE.MeshBasicMaterial({ color: 0xffd27a }));
+      lamp.position.set(3.45, DECK_Y + 0.35, z);
+      this.castle.add(lamp);
+      this.lanterns.push(lamp);
+    }
+    // Smokestacks at the back; smoke is spawned from their tops.
+    for (const z of [-1.3, 1.3]) {
+      const stack = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.34, 2.2, 8), iron);
+      stack.position.set(-3.0, DECK_Y + 1.1, z);
+      stack.castShadow = true;
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.3, 0.3, 8), brass);
+      cap.position.set(-3.0, DECK_Y + 2.3, z);
+      this.castle.add(stack, cap);
+      this.stacks.push(new THREE.Vector3(-3.0, DECK_Y + 2.5, z));
     }
     this.core = new THREE.Mesh(new THREE.OctahedronGeometry(0.6, 0), new THREE.MeshBasicMaterial({ color: 0x60e0ff }));
     this.core.position.y = 7.2;
     this.castle.add(this.core);
     this.fire = new THREE.Mesh(new THREE.ConeGeometry(1.2, 2.4, 6), new THREE.MeshBasicMaterial({ color: 0xff6a20, transparent: true, opacity: 0.85 }));
     this.fire.position.y = 6.2;
+    this.fire.visible = false; // fire is drawn with particles
     this.castle.add(this.fire);
     this.scene.add(this.castle);
 
@@ -263,7 +367,7 @@ export class GameRenderer {
     this.blueprint = new Instanced(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0x80c0ff, transparent: true, opacity: 0.35, depthWrite: false }), 300, this.scene, false);
     this.cliffs = [new Instanced(cliffGeometry(), mat, 600, this.scene)];
 
-    const glowMat = new THREE.MeshBasicMaterial({ map: glowTexture(), color: 0xffc070, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false });
+    const glowMat = new THREE.MeshBasicMaterial({ map: glowTexture(), color: 0xffc898, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false });
     const glowGeo = new THREE.PlaneGeometry(2, 2);
     glowGeo.rotateX(-Math.PI / 2);
     this.glows = new Instanced(glowGeo, glowMat, 200, this.scene, false);
@@ -273,6 +377,16 @@ export class GameRenderer {
     ringGeo.rotateX(-Math.PI / 2);
     this.rings = new Instanced(ringGeo, new THREE.MeshBasicMaterial({ color: 0xfff080, transparent: true, opacity: 0.9, depthWrite: false }), 96, this.scene, false);
     this.puffs = new Instanced(new THREE.IcosahedronGeometry(0.3, 0), new THREE.MeshBasicMaterial({ color: 0xffffff }), 128, this.scene, false);
+    this.smokeMesh = new Instanced(new THREE.IcosahedronGeometry(0.5, 0), new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true, transparent: true, opacity: 0.75 }), 400, this.scene, false);
+    this.flameMesh = new Instanced(new THREE.IcosahedronGeometry(0.3, 0), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }), 400, this.scene, false);
+    this.torchFlames = new Instanced(new THREE.OctahedronGeometry(0.22, 0), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }), 300, this.scene, false);
+    const arrowGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.9, 4);
+    const tip = new THREE.ConeGeometry(0.08, 0.22, 4);
+    tip.translate(0, 0.55, 0);
+    const arrow = mergeGeometries([arrowGeo, tip])!;
+    arrow.rotateX(Math.PI / 2); // points along +z
+    this.arrowMesh = new Instanced(arrow, new THREE.MeshBasicMaterial({ color: 0xf2e2b6 }), 300, this.scene, false);
+    this.spitMesh = new Instanced(new THREE.IcosahedronGeometry(0.18, 0), new THREE.MeshBasicMaterial({ color: 0x9cff60 }), 120, this.scene, false);
 
     this.ghost = new THREE.Mesh(new THREE.BoxGeometry(1, 1.2, 1), new THREE.MeshBasicMaterial({ color: 0x40ff60, transparent: true, opacity: 0.45, depthWrite: false }));
     this.ghost.visible = false;
@@ -329,7 +443,7 @@ export class GameRenderer {
     for (const [name, b] of Object.entries(m.decor) as [DecorName, Baked][]) {
       if (name === 'pumpkin' || name === 'wheat' || name === 'corn') continue;
       const big = name === 'log' || name === 'stumpOld' || name === 'campfire';
-      this.decor.set(name, new Instanced(b.geo, b.materials, big ? 120 : 1600, this.scene, big));
+      this.decor.set(name, new Instanced(b.geo, b.materials, big ? 120 : 3600, this.scene, big));
     }
     this.crops = [m.decor.pumpkin, m.decor.wheat, m.decor.corn].map((b) => new Instanced(b.geo, b.materials, 800, this.scene));
     for (const v of this.nodes.bush) v.mesh.visible = false;
@@ -337,31 +451,34 @@ export class GameRenderer {
     this.decorKey = '';
     // Castle: KayKit keep on the code-built wooden platform with wheels.
     this.castleCode.visible = false;
-    const deck = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.5, 6.4), new THREE.MeshLambertMaterial({ color: 0x6b4a2a }));
-    deck.position.y = 0.95;
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(6.6, 0.4, 4.7), new THREE.MeshLambertMaterial({ color: 0x7a5432 }));
+    deck.position.y = DECK_Y - 0.2;
+    const trim = new THREE.Mesh(new THREE.BoxGeometry(6.8, 0.16, 4.9), new THREE.MeshLambertMaterial({ color: 0x4a2e1a }));
+    trim.position.y = DECK_Y - 0.42;
+    this.castle.add(trim);
     const keep = new THREE.Mesh(m.props.castle.geo, m.props.castle.materials);
-    keep.position.y = 1.2;
+    keep.position.y = DECK_Y;
     this.castle.add(deck, keep);
     deck.castShadow = keep.castShadow = true;
     // Palisade along the deck edge: the castle wall.
     for (let i = 0; i < 5; i++) {
       const o = -2.6 + i * 1.3;
-      for (const [x, z, r] of [[o, -3.05, 0], [o, 3.05, 0], [-3.05, o, Math.PI / 2], [3.05, o, Math.PI / 2]]) {
-        if (Math.abs(o) < 0.7 && z === 3.05) continue; // gate gap facing the camera
+      for (const [x, z, r] of [[o, -2.25, 0], [o, 2.25, 0], [-3.15, o * 0.65, Math.PI / 2], [3.15, o * 0.65, Math.PI / 2]]) {
+        if (Math.abs(o) < 0.7 && z === 2.25) continue; // gate gap facing the camera
         const f = new THREE.Mesh(m.props.fence.geo, m.props.fence.materials);
-        f.position.set(x, 1.2, z);
+        f.position.set(x, DECK_Y, z);
         f.rotation.y = r;
         f.scale.set(1.15, 1.1, 1.15);
         f.castShadow = true;
         this.flags.add(f);
       }
     }
-    for (const [x, z] of [[-3, -3], [3, -3], [-3, 3], [3, 3]]) {
+    for (const [x, z] of [[-3.1, -2.2], [3.1, -2.2], [-3.1, 2.2], [3.1, 2.2]]) {
       const f = new THREE.Mesh(m.props.flag.geo, m.props.flag.materials);
-      f.position.set(x, 1.2, z);
+      f.position.set(x, DECK_Y, z);
       this.flags.add(f);
     }
-    this.core.position.y = 9.2;
+    this.core.position.y = DECK_Y + 8;
   }
 
   /** Shadows cost the most on weak GPUs; main turns them off when frames stay slow. */
@@ -428,14 +545,23 @@ export class GameRenderer {
       if (!p) continue;
       switch (e.key) {
         case 'fx.arrow':
-          this.fx.push({ kind: 'tracer', a: p, b: e.to, t: 0, ttl: 0.18, r: 0, color: 0xfff0b0 });
+          if (e.to) this.projectiles.push({ a: p, b: e.to, t: 0, ttl: 0.28, arc: 0.9, kind: 'arrow' });
           break;
         case 'fx.spit':
-          this.fx.push({ kind: 'tracer', a: p, b: e.to, t: 0, ttl: 0.25, r: 0, color: 0x90ff60 });
+          if (e.to) this.projectiles.push({ a: p, b: e.to, t: 0, ttl: 0.35, arc: 0.6, kind: 'spit' });
           break;
-        case 'fx.monsterDie':
-          this.fx.push({ kind: 'puff', a: p, t: 0, ttl: 0.45, r: e.params?.type === 'boss' ? 3 : 1, color: 0x402030 });
+        case 'fx.monsterDie': {
+          const type = String(e.params?.type ?? 'fast') as MonsterType;
+          const crowd = this.monsters[type];
+          this.corpses.push({ crowd, x: p.x, z: p.z, rot: Math.random() * Math.PI * 2, t: 0, scale: type === 'boss' && crowd.hasModel ? 2.4 : 1, color: 0xb0a0a0 });
+          this.fx.push({ kind: 'puff', a: p, t: 0, ttl: 0.45, r: type === 'boss' ? 3 : 0.8, color: 0x403038 });
           break;
+        }
+        case 'msg.unitLost': {
+          const crowd = this.units[String(e.params?.unit ?? 'peasant') as UnitType];
+          if (crowd) this.corpses.push({ crowd, x: p.x, z: p.z, rot: Math.random() * Math.PI * 2, t: 0, scale: 1, color: 0x9a9090 });
+          break;
+        }
         case 'fx.structDie':
         case 'fx.built':
           this.fx.push({ kind: 'puff', a: p, t: 0, ttl: 0.4, r: 1.2, color: 0xc0a080 });
@@ -447,8 +573,17 @@ export class GameRenderer {
         case 'fx.telegraph':
           this.fx.push({ kind: 'telegraph', a: p, t: 0, ttl: Number(e.params?.t ?? 1.5), r: Number(e.params?.r ?? 4), color: 0xff3020 });
           break;
-        case 'fx.slam':
         case 'fx.arrowRain':
+          // A volley falling from the sky over the area.
+          for (let i = 0; i < 26; i++) {
+            const a = Math.random() * Math.PI * 2;
+            const r = Math.sqrt(Math.random()) * BALANCE.abilities.arrowRain.radius!;
+            const to = { x: p.x + Math.cos(a) * r, z: p.z + Math.sin(a) * r };
+            this.projectiles.push({ a: { x: to.x - 3, z: to.z + 2 }, b: to, t: -Math.random() * 0.3, ttl: 0.45, arc: 7, kind: 'rain' });
+          }
+          this.fx.push({ kind: 'slam', a: p, t: 0, ttl: 0.6, r: BALANCE.abilities.arrowRain.radius!, color: 0xfff0a0 });
+          break;
+        case 'fx.slam':
           this.fx.push({ kind: 'slam', a: p, t: 0, ttl: 0.5, r: Number(e.params?.r ?? BALANCE.abilities.arrowRain.radius), color: e.key === 'fx.slam' ? 0xff6030 : 0xfff0a0 });
           break;
         case 'fx.bell':
@@ -468,13 +603,16 @@ export class GameRenderer {
     // Sky and lights.
     const day = new THREE.Color(0x9cc8e8);
     const dusk = new THREE.Color(0xe89a6a);
-    const dark = new THREE.Color(0x0a0f1e);
+    const dark = new THREE.Color(0x0d1a33);
     const sky = n < 0.5 ? day.clone().lerp(dusk, n * 2) : dusk.clone().lerp(dark, (n - 0.5) * 2);
     (this.scene.background as THREE.Color).copy(sky);
     (this.scene.fog as THREE.Fog).color.copy(sky);
-    this.hemi.intensity = 1.6 * (1 - n) + 0.12 * n;
-    this.sun.intensity = 1.8 * (1 - n) + 0.15 * n;
-    this.sun.color.setHex(n > 0.5 ? 0x8090ff : 0xfff2d8);
+    // Night is moonlit blue, not black: the lit areas stay warm, the rest reads as cold and dangerous.
+    this.hemi.intensity = 1.6 * (1 - n) + 0.32 * n;
+    this.hemi.color.setHex(n > 0.5 ? 0x5a70b0 : 0xdfefff);
+    this.hemi.groundColor.setHex(n > 0.5 ? 0x1a1a28 : 0x6a5a40);
+    this.sun.intensity = 1.8 * (1 - n) + 0.5 * n;
+    this.sun.color.setHex(n > 0.5 ? 0x7c92ff : n > 0.2 ? 0xffb078 : 0xfff2d8);
 
     // Camera.
     this.camSmooth.lerp(this.camTarget, Math.min(1, dt * 10));
@@ -490,9 +628,48 @@ export class GameRenderer {
     // Castle.
     const c = s.castle;
     this.castle.position.set(c.x, 0, c.z);
-    const roll = c.moving ? this.time * 2.2 : 0;
+    this.wheelRoll += c.moving ? dt * 3.2 : 0;
+    const roll = this.wheelRoll;
     for (const w of this.wheels) w.rotation.z = w.position.z < 0 ? roll : -roll;
-    this.castle.position.y = c.moving ? Math.abs(Math.sin(this.time * 4)) * 0.08 : 0;
+    // Coupling rods follow the crank pins; the body rocks a little on the move.
+    this.rods.forEach((r, i) => {
+      const ph = roll + (i % 2) * 0.4;
+      r.position.y = WHEEL_Y + Math.sin(ph) * WHEEL_R * 0.45;
+      r.position.x = (r.position.x > 0 ? 2.1 : -2.1) + Math.cos(ph) * WHEEL_R * 0.45;
+    });
+    this.castle.position.y = c.moving ? Math.abs(Math.sin(this.time * 6)) * 0.05 : 0;
+    this.castle.rotation.x = c.moving ? Math.sin(this.time * 2.7) * 0.008 : 0;
+    this.castle.rotation.z = c.moving ? Math.sin(this.time * 3.3) * 0.01 : 0;
+    // Smoke: thick while rolling, a lazy wisp when parked.
+    this.smokeTimer += dt * (c.moving ? 14 : 1.5);
+    while (this.smokeTimer >= 1) {
+      this.smokeTimer -= 1;
+      const st = this.stacks[this.particles.length % Math.max(1, this.stacks.length)];
+      if (!st) break;
+      this.particles.push({
+        x: c.x + st.x + (Math.random() - 0.5) * 0.2,
+        y: st.y,
+        z: c.z + st.z + (Math.random() - 0.5) * 0.2,
+        vx: c.moving ? -1.6 : 0.1,
+        vy: 1.4 + Math.random() * 0.6,
+        vz: (Math.random() - 0.5) * 0.3,
+        age: 0,
+        life: c.moving ? 2.4 : 3.2,
+        size: 0.35,
+        grow: 0.7,
+        color: n > 0.5 ? 0x3a3f4a : 0x9a9a9a,
+      });
+    }
+    // Roof fire: flames and dark smoke from the keep.
+    if (c.fire > 0) {
+      for (let i = 0; i < 3; i++) {
+        const fx = c.x + (Math.random() - 0.5) * 2.4;
+        const fz = c.z + (Math.random() - 0.5) * 2.4;
+        this.particles.push({ x: fx, y: DECK_Y + 4.5, z: fz, vx: 0, vy: 2 + Math.random() * 1.5, vz: 0, age: 0, life: 0.6, size: 0.6, grow: -0.6, color: Math.random() < 0.5 ? 0xff7a20 : 0xffc040 });
+      }
+      if (Math.random() < 0.3) this.particles.push({ x: c.x, y: DECK_Y + 6, z: c.z, vx: 0.2, vy: 1.2, vz: 0, age: 0, life: 2.5, size: 0.6, grow: 0.8, color: 0x2a2a2e });
+    }
+    for (const l of this.lanterns) (l.material as THREE.MeshBasicMaterial).color.setHex(n > 0.3 ? 0xffe0a0 : 0xb08a3a);
     this.core.rotation.y = this.time;
     const coreRatio = c.coreHp / c.coreMax;
     (this.core.material as THREE.MeshBasicMaterial).color.setHex(coreRatio > 0.5 ? 0x60e0ff : coreRatio > 0.3 ? 0xffc040 : 0xff3030);
@@ -502,6 +679,7 @@ export class GameRenderer {
     const ls = lights(s);
     const dark2 = s.phase === 'night';
 
+    this.ageCorpses(dt);
     // Units.
     for (const type of UNIT_TYPES) this.units[type].begin();
     this.rings.begin();
@@ -516,14 +694,15 @@ export class GameRenderer {
       const working = u.job === 'gather' || u.job === 'build' || u.job === 'repair' || u.job === 'attack';
       const pose: Pose = mo.moving < 0.15 ? 'move' : working ? 'act' : 'idle';
       const hurt = u.hp / u.maxHp;
-      const col = hurt > 0.5 ? (u.type === 'shield' ? 0xa8c0ff : 0xffffff) : hurt > 0.25 ? 0xffb0a0 : 0xff6050;
-      const onWall = crowd.hasModel && u.type === 'archer' && Math.abs(u.x - c.x) < 3.2 && Math.abs(u.z - c.z) < 3.2;
+      const col = this.hitTint(mo, u.hp, hurt > 0.5 ? (u.type === 'shield' ? 0xa8c0ff : 0xffffff) : hurt > 0.25 ? 0xffb0a0 : 0xff6050);
+      const onWall = crowd.hasModel && u.type === 'archer' && Math.abs(u.x - c.x) < 3.3 && Math.abs(u.z - c.z) < 2.35;
       const bob = crowd.hasModel ? 0 : pose === 'act' ? Math.abs(Math.sin(this.time * 8 + u.id)) * 0.1 : 0;
       const size = (crowd.hasModel ? 1 : 1.35) * (u.type === 'shield' ? 1.12 : 1);
       crowd.add(pose, this.time * (pose === 'move' ? 1.1 : 1.4) + u.id * 0.37, u.x, (onWall ? WALL_WALK_Y : 0) + bob, u.z, mo.rot, size, col);
       if (u.type === selType) this.rings.add(u.x, onWall ? WALL_WALK_Y + 0.05 : 0.06, u.z, 0, 1, 1, 1, 0xfff080);
       else if (s.selectedIds.includes(u.id)) this.rings.add(u.x, onWall ? WALL_WALK_Y + 0.05 : 0.06, u.z, 0, 1.1, 1, 1.1, 0x80f0ff);
     }
+    this.drawCorpses(new Set(Object.values(this.units)));
     for (const type of UNIT_TYPES) this.units[type].end();
 
     // Monsters (only in the light at night).
@@ -539,12 +718,13 @@ export class GameRenderer {
       if (m.type === 'boss') sc = crowd.hasModel ? 2.4 : 1.25;
       else if (!crowd.hasModel) sc *= 1.25;
       const base = m.type === 'boss' && crowd.hasModel ? 0xff8070 : 0xffffff;
-      const col = hurt > 0.5 ? base : 0xff9090;
+      const col = this.hitTint(mo, m.hp, hurt > 0.5 ? base : 0xff9090);
       const pose: Pose = m.slamAt ? 'act' : mo.moving < 0.15 ? 'move' : 'act';
       const bob = crowd.hasModel ? 0 : Math.abs(Math.sin(this.time * 9 + m.id)) * 0.12;
       crowd.add(pose, this.time * (m.type === 'fast' ? 1.6 : 1.1) + m.id * 0.29, m.x, bob, m.z, mo.rot, sc, col);
     }
     for (const id of this.motion.keys()) if (!seen.has(id)) this.motion.delete(id);
+    this.drawCorpses(new Set(Object.values(this.monsters)));
     for (const k of Object.keys(this.monsters) as MonsterType[]) this.monsters[k].end();
 
     // Resource nodes shrink as they deplete.
@@ -593,10 +773,10 @@ export class GameRenderer {
     // Light discs and point lights.
     this.glows.begin();
     if (n > 0.05) {
-      for (const l of ls) this.glows.add(l.x, 0.04, l.z, 0, l.r, 1, l.r);
+      for (const l of ls) this.glows.add(l.x, 0.04, l.z, 0, l.r * 1.15, 1, l.r * 1.15);
     }
     this.glows.end();
-    (this.glows.mesh.material as THREE.MeshBasicMaterial).opacity = 0.42 * n;
+    (this.glows.mesh.material as THREE.MeshBasicMaterial).opacity = 0.17 * n;
     const sorted = ls
       .map((l) => ({ l, d: (l.x - t.x) ** 2 + (l.z - t.z) ** 2 }))
       .sort((a, b) => a.d - b.d);
@@ -608,7 +788,7 @@ export class GameRenderer {
       }
       pl.position.set(e.l.x, i === 0 ? 7 : 2.5, e.l.z);
       pl.distance = e.l.r * 1.7;
-      pl.intensity = (i === 0 ? 40 : 14) * n * (0.92 + Math.sin(this.time * 11 + i) * 0.08);
+      pl.intensity = (i === 0 ? 32 : 13) * n * (0.9 + Math.sin(this.time * 11 + i) * 0.06 + Math.sin(this.time * 23 + i * 2) * 0.04);
     });
 
     // Overlay.
@@ -624,6 +804,20 @@ export class GameRenderer {
       this.skillRing.scale.setScalar(overlay.skillTarget.radius);
     } else this.skillRing.visible = false;
 
+    // Torch flames flicker on top of every lit torch (brighter at night).
+    this.torchFlames.begin();
+    for (const st of s.structs) {
+      if (st.type !== 'torch' || st.built < 1) continue;
+      const f = 0.85 + Math.sin(this.time * 17 + st.id) * 0.15 + Math.sin(this.time * 29 + st.id * 3) * 0.08;
+      const y = this.models ? 1.45 : 1.55;
+      this.torchFlames.add(st.cx + 0.5, y, st.cz + 0.5, this.time * 2 + st.id, 0.9 * f, 1.5 * f, 0.9 * f, n > 0.2 ? 0xffa040 : 0xc87830);
+      if (n > 0.4 && Math.random() < dt * 3) {
+        this.particles.push({ x: st.cx + 0.5, y: y + 0.2, z: st.cz + 0.5, vx: (Math.random() - 0.5) * 0.4, vy: 1.6, vz: (Math.random() - 0.5) * 0.4, age: 0, life: 0.7, size: 0.12, grow: -0.1, color: 0xffd060 });
+      }
+    }
+    this.torchFlames.end();
+    this.updateParticles(dt);
+    this.updateProjectiles(dt);
     this.updateFx(dt);
     this.renderer.render(this.scene, this.camera);
   }
@@ -695,7 +889,14 @@ export class GameRenderer {
         if (terrain === 'canyon' && (name.startsWith('flower') || name.startsWith('mushroom'))) name = 'pebble';
         if (terrain === 'forest' && name === 'flowerYellow') name = 'mushroomTan';
         const sc = 0.75 + h(4) * 0.6;
-        this.decor.get(name)!.add(x, terrainHeight(seed, x, z), z, h(5) * Math.PI * 2, sc, sc, sc, 0xffffff);
+        const inst = this.decor.get(name)!;
+        // Grass grows in tufts of a few blades so it reads as patches, not noise.
+        const tuft = name.startsWith('grass') ? 3 : 1;
+        for (let j = 0; j < tuft; j++) {
+          const ox = j ? (h(6 + j) - 0.5) * 0.9 : 0;
+          const oz = j ? (h(9 + j) - 0.5) * 0.9 : 0;
+          inst.add(x + ox, terrainHeight(seed, x + ox, z + oz), z + oz, h(5) * Math.PI * 2 + j, sc * (1 - j * 0.15), sc * (1 - j * 0.15), sc * (1 - j * 0.15), 0xffffff);
+        }
       }
     }
     for (const v of this.decor.values()) v.end();
@@ -758,6 +959,70 @@ export class GameRenderer {
     g.getAttribute('color').needsUpdate = true;
   }
 
+  private updateParticles(dt: number): void {
+    this.smokeMesh.begin();
+    this.flameMesh.begin();
+    if (this.particles.length > 500) this.particles.splice(0, this.particles.length - 500);
+    for (const p of this.particles) {
+      p.age += dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.z += p.vz * dt;
+      p.vy *= 1 - dt * 0.3;
+      const k = p.age / p.life;
+      if (k >= 1) continue;
+      const size = Math.max(0.02, p.size + p.grow * k) * (k < 0.15 ? k / 0.15 : 1 - Math.max(0, k - 0.6) / 0.4);
+      const flame = p.color === 0xff7a20 || p.color === 0xffc040 || p.color === 0xffd060;
+      (flame ? this.flameMesh : this.smokeMesh).add(p.x, p.y, p.z, p.age * 2, size, size, size, p.color);
+    }
+    this.particles = this.particles.filter((p) => p.age < p.life);
+    this.smokeMesh.end();
+    this.flameMesh.end();
+  }
+
+  /** Arrows fly on a small arc and point along their path; spit is a green blob. */
+  private updateProjectiles(dt: number): void {
+    this.arrowMesh.begin();
+    this.spitMesh.begin();
+    for (const p of this.projectiles) {
+      p.t += dt;
+      if (p.t < 0) continue;
+      const k = Math.min(1, p.t / p.ttl);
+      const x = p.a.x + (p.b.x - p.a.x) * k;
+      const z = p.a.z + (p.b.z - p.a.z) * k;
+      const base = p.kind === 'rain' ? 0.2 : 1.1;
+      const y = base + Math.sin(Math.PI * k) * p.arc + (p.kind === 'rain' ? p.arc * (1 - k) : 0);
+      if (p.kind === 'spit') {
+        this.spitMesh.add(x, y, z, 0, 1, 1, 1);
+        continue;
+      }
+      const yaw = Math.atan2(p.b.x - p.a.x, p.b.z - p.a.z);
+      const len = Math.hypot(p.b.x - p.a.x, p.b.z - p.a.z) || 1;
+      const dy = p.kind === 'rain' ? -p.arc * 1.6 : Math.cos(Math.PI * k) * Math.PI * p.arc;
+      const pitch = -Math.atan2(dy, len);
+      this.arrowMesh.add(x, y, z, yaw, 1, 1, 1, undefined, pitch);
+    }
+    this.projectiles = this.projectiles.filter((p) => p.t < p.ttl);
+    this.arrowMesh.end();
+    this.spitMesh.end();
+  }
+
+  private ageCorpses(dt: number): void {
+    for (const c of this.corpses) c.t += dt;
+    this.corpses = this.corpses.filter((c) => c.t < 2.2);
+    if (this.corpses.length > 60) this.corpses.splice(0, this.corpses.length - 60);
+  }
+
+  /** The fallen tip over, lie still, then sink into the ground. */
+  private drawCorpses(crowds: Set<Crowd>): void {
+    for (const c of this.corpses) {
+      if (!crowds.has(c.crowd)) continue;
+      const fall = Math.min(1, c.t / 0.35);
+      const sink = Math.max(0, c.t - 1.2) / 1.0;
+      c.crowd.add('idle', 0, c.x, -sink * 0.9, c.z, c.rot, c.scale, c.color, -fall * Math.PI * 0.48);
+    }
+  }
+
   /** Ballast bed, sleepers and two steel rails. Built once around x = 0 and slid along with the camera. */
   private buildRailway(): THREE.Group {
     const g = new THREE.Group();
@@ -810,12 +1075,21 @@ export class GameRenderer {
   }
 
   /** Facing and "is moving" for an entity, from its position change between frames. */
+  /** Hit flash: a short white-hot tint whenever hp drops. */
+  private hitTint(m: Motion, hp: number, base: number): number | THREE.Color {
+    if (hp < m.hp - 0.01) m.flash = 0.12;
+    m.hp = hp;
+    if (m.flash <= 0) return base;
+    return this.flashCol.setHex(base).lerp(this.white, m.flash / 0.12);
+  }
+
   private track(id: number, x: number, z: number, dt: number, faceTarget?: { x: number; z: number }): Motion {
     let m = this.motion.get(id);
     if (!m) {
-      m = { x, z, rot: (id * 2.39996) % (Math.PI * 2), moving: 1 };
+      m = { x, z, rot: (id * 2.39996) % (Math.PI * 2), moving: 1, hp: Infinity, flash: 0 };
       this.motion.set(id, m);
     }
+    m.flash = Math.max(0, m.flash - dt);
     const dx = x - m.x;
     const dz = z - m.z;
     if (dx * dx + dz * dz > 1e-5) {

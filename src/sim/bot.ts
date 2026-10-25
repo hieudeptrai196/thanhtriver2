@@ -78,13 +78,20 @@ export function botCommands(sim: Sim, policy: BotPolicy = 'tactical'): Command[]
     const torches = s.structs.filter((x) => x.type === 'torch').length;
     const place = (type: StructType, r: number, idx: number) => {
       const d = dirs[idx % dirs.length];
-      const off = Math.floor(idx / dirs.length) * 3 - 1.5;
-      const pos = d === 'E' ? { x: c.x + r, z: off } : d === 'W' ? { x: c.x - r, z: off } : d === 'N' ? { x: c.x + off, z: -r } : { x: c.x + off, z: r };
+      const k = Math.floor(idx / dirs.length);
+      const off = k * 3 - 1.5;
+      // East and west lanes run along the railway: build beside it, not on it.
+      const side = (k % 2 ? 1 : -1) * (BALANCE.world.roadHalfWidth + 1.5);
+      const pos = d === 'E' ? { x: c.x + r, z: side } : d === 'W' ? { x: c.x - r, z: side } : d === 'N' ? { x: c.x + off, z: -r } : { x: c.x + off, z: r };
       if (sim.canBuildAt(type, pos) && canAfford(s, structCost(s, type))) out.push({ t: 'build', type, pos });
     };
     if (torches < 4 && s.res.wood > 40) place('torch', 12, torches);
     else if (towers < 4 && s.res.wood > 90) place('tower', 7, towers);
   }
+
+  // Tactical commander (GDD v1.2 §11.1): at dusk the melee forms a shield line across the heaviest lane,
+  // the rest guard the castle; at daybreak everyone goes back to automatic work.
+  if (policy === 'tactical') out.push(...tacticalOrders(sim));
 
   // Abilities.
   if (s.phase === 'night') {
@@ -99,6 +106,27 @@ export function botCommands(sim: Sim, policy: BotPolicy = 'tactical'): Command[]
     if (c.wallHp / c.wallMax < 0.2 && s.cooldowns.seal <= 0) out.push({ t: 'ability', id: 'seal' });
     if (s.unlocked.includes('patch') && c.wallHp / c.wallMax < 0.4 && s.res.wood >= BALANCE.patch.wood && s.cooldowns.patch <= 0) out.push({ t: 'ability', id: 'patch' });
     if (s.unlocked.includes('reserve') && s.monsters.length > 12 && s.cooldowns.reserve <= 0) out.push({ t: 'ability', id: 'reserve' });
+  }
+  return out;
+}
+
+function tacticalOrders(sim: Sim): Command[] {
+  const s = sim.state;
+  const c = s.castle;
+  const out: Command[] = [];
+  const melee = s.units.filter((u) => (u.type === 'shield' || u.type === 'spear') && !s.reserveIds.includes(u.id));
+  if (s.phase === 'dusk' && s.plan && s.phaseTime > 2 && melee.length >= 3 && !melee.some((u) => u.order?.kind === 'hold')) {
+    const main = s.plan.weights.indexOf(Math.max(...s.plan.weights));
+    const dir = s.plan.dirs[main];
+    const v = dir === 'E' ? [1, 0] : dir === 'W' ? [-1, 0] : dir === 'N' ? [0, -1] : [0, 1];
+    const pos = { x: c.x + v[0] * 6.5, z: c.z + v[1] * 6.5 };
+    // Keep a couple of spears home when raiders are coming for the workers.
+    const keep = s.plan.patterns.includes('harass') ? 2 : 0;
+    const line = melee.slice(0, Math.max(3, melee.length - keep)).map((u) => u.id);
+    out.push({ t: 'setFormation', formation: 'line' }, { t: 'selectUnits', ids: line }, { t: 'order', pos, mode: 'hold' }, { t: 'selectUnits', ids: [] });
+  }
+  if (s.phase === 'day' && s.phaseTime < 2 && s.units.some((u) => u.order?.kind === 'hold')) {
+    out.push({ t: 'selectUnits', ids: s.units.filter((u) => u.order?.kind === 'hold').map((u) => u.id) }, { t: 'releaseUnits' });
   }
   return out;
 }

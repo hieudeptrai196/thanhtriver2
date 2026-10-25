@@ -15,7 +15,6 @@ const SOUNDS: Record<string, Voice> = {
   'fx.structDie': { freq: 120, to: 40, dur: 0.35, noise: true, vol: 0.08 },
   'fx.built': { freq: 520, to: 780, dur: 0.12, type: 'triangle', vol: 0.06 },
   'fx.place': { freq: 440, dur: 0.05, type: 'triangle', vol: 0.05 },
-  'fx.order': { freq: 660, dur: 0.04, type: 'sine', vol: 0.05 },
   'fx.deliver': { freq: 880, to: 1100, dur: 0.05, type: 'sine', vol: 0.025 },
   'fx.arrowRain': { freq: 1200, to: 300, dur: 0.6, noise: true, vol: 0.1 },
   'fx.bell': { freq: 523, dur: 1.2, type: 'sine', vol: 0.12 },
@@ -32,6 +31,14 @@ const SOUNDS: Record<string, Voice> = {
   'msg.gameOver': { freq: 220, to: 55, dur: 2, type: 'sawtooth', vol: 0.12 },
   'msg.unitLost': { freq: 250, to: 150, dur: 0.25, type: 'triangle', vol: 0.06 },
   'msg.tierUp': { freq: 523, to: 1046, dur: 0.6, type: 'triangle', vol: 0.1 },
+  'msg.sealed': { freq: 140, to: 70, dur: 0.7, noise: true, vol: 0.12 },
+  'msg.reserve': { freq: 392, to: 523, dur: 0.4, type: 'square', vol: 0.06 },
+  'msg.patched': { freq: 660, to: 880, dur: 0.25, type: 'triangle', vol: 0.07 },
+  'msg.nightPlan': { freq: 98, to: 82, dur: 1.0, type: 'sawtooth', vol: 0.05 },
+  'msg.victory': { freq: 523, to: 1568, dur: 1.4, type: 'triangle', vol: 0.12 },
+  'msg.hungry': { freq: 220, to: 180, dur: 0.5, type: 'triangle', vol: 0.06 },
+  'msg.overloaded': { freq: 110, to: 90, dur: 0.3, type: 'square', vol: 0.05 },
+  'fx.order': { freq: 700, to: 900, dur: 0.05, type: 'sine', vol: 0.04 },
 };
 
 export class Audio {

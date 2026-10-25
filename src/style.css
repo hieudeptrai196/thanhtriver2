@@ -267,7 +267,8 @@ body {
 
 .hint {
   position: absolute;
-  top: 70px;
+  top: auto;
+  bottom: calc(var(--bb, 110px) + 150px);
   left: 50%;
   transform: translateX(-50%);
   padding: 6px 14px;
@@ -289,9 +290,9 @@ body {
 
 .toasts {
   position: absolute;
-  top: 34%;
+  top: 70px;
   left: 50%;
-  transform: translate(-50%, -50%);
+  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -299,12 +300,12 @@ body {
   pointer-events: none !important;
 }
 .toast {
-  padding: 8px 18px;
-  border-radius: 10px;
-  background: rgba(20, 24, 36, 0.92);
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(20, 24, 36, 0.88);
   border: 1px solid var(--line);
   font-weight: 700;
-  font-size: 15px;
+  font-size: 13px;
   transition: opacity 0.6s, transform 0.6s;
   white-space: nowrap;
 }
@@ -316,7 +317,7 @@ body {
   color: #fff;
   background: rgba(150, 30, 20, 0.92);
   border-color: #ff6050;
-  font-size: 17px;
+  font-size: 14px;
 }
 .toast.fade {
   opacity: 0;
@@ -411,16 +412,11 @@ body {
   font-size: 12px;
 }
 .order-bar {
-  position: absolute;
-  left: 50%;
-  bottom: calc(var(--bb, 110px) + 98px);
-  transform: translateX(-50%);
   display: none;
   gap: 4px;
-  padding: 4px;
-  background: var(--panel);
-  border: 1px solid #f0c050;
-  border-radius: 12px;
+  padding: 0 6px;
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
 }
 .order-bar.show {
   display: flex;
@@ -429,6 +425,15 @@ body {
   color: var(--muted);
   font-size: 12px;
   margin-left: 6px;
+}
+/* Short screens: while units are picked, the pick row takes the squad strip's place. */
+@media (max-height: 520px) {
+  .hud.picking .squad-bar {
+    display: none;
+  }
+  .hud.picking .pick-bar {
+    bottom: calc(var(--bb, 110px) + 2px);
+  }
 }
 .pick-bar.show {
   display: flex;
@@ -491,16 +496,46 @@ body {
   position: absolute;
   top: 64px;
   left: max(8px, env(safe-area-inset-left));
-  max-width: min(360px, 46vw);
+  max-width: min(420px, 60vw);
   display: none;
-  flex-direction: column;
-  gap: 3px;
-  padding: 8px 12px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
   background: rgba(40, 18, 18, 0.88);
   border: 1px solid #a04030;
   border-radius: 12px;
+  font-size: 13px;
+}
+.plan-chip {
+  font-weight: 800;
+  color: #ffb070;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 120, 60, 0.15);
+  cursor: help;
+}
+.plan-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+}
+.route-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+}
+.chip {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
   font-size: 12px;
-  pointer-events: none !important;
+  white-space: nowrap;
+}
+.small {
+  font-size: 12px;
 }
 .plan-banner.show {
   display: flex;
@@ -859,13 +894,18 @@ body {
   color: var(--accent);
 }
 
-/* Narrow desktops and tablets: the bottom bars show icons and counts only (names stay in tooltips). */
-@media (max-width: 1100px) {
+/* The bars show icons and counts only; names live in tooltips (less text on screen). */
+@media all {
   .groups .btn .nm,
   .actions .btn .nm,
   .squad-bar .btn .nm,
+  .order-bar .btn .nm,
   .topbar .btn .nm {
     display: none;
+  }
+  .order-bar .btn .ic {
+    margin-right: 0;
+    font-size: 16px;
   }
   .groups .btn .ic,
   .actions .btn .ic {

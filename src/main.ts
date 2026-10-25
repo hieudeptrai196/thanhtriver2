@@ -6,6 +6,7 @@ import { GameRenderer } from './render/renderer';
 import { botCommands } from './sim/bot';
 import { DT, score, Sim } from './sim/sim';
 import type { Command } from './sim/types';
+import type { GameMode } from './data/balance';
 import { el, Hud, type GameCtl, type Mode } from './ui/hud';
 import { addScore, clearSave, loadSave, loadScores, writeSave } from './ui/storage';
 
@@ -132,7 +133,8 @@ class Game implements GameCtl {
       renderer.onEvents(events);
       audio.play(events);
       for (const e of events) {
-        if (e.key === 'msg.dawn') writeSave(sim.save());
+        // Checkpoints at dawn and at dusk (GDD v1.2 §18): both are between ticks, so the state is consistent.
+        if (e.key === 'msg.dawn' || e.key === 'msg.dusk') writeSave(sim.save());
         if (e.key === 'msg.gameOver' || e.key === 'msg.victory') {
           clearSave();
           const s = sim.state;
@@ -168,6 +170,12 @@ function startGame(sim: Sim): void {
   current = new Game(sim);
   if (import.meta.env.DEV) (window as unknown as { game: Game }).game = current;
 }
+
+// Dev only: start a game from the console, e.g. start('endless').
+if (import.meta.env.DEV) (window as unknown as { start: (mode: GameMode) => void }).start = (mode) => {
+    current?.destroy();
+    startGame(Sim.create(newSeed(), mode));
+  };
 
 // Buttons must not keep focus, or Space would also "click" the last pressed button.
 document.addEventListener('click', (e) => (e.target as HTMLElement | null)?.closest('button')?.blur(), true);

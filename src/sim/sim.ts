@@ -267,7 +267,7 @@ export function unitMaxHp(s: GameState, type: UnitType): number {
 export function archerRange(s: GameState, u: Unit): number {
   let r = U.archer.range;
   if (hasSynergy(s, 'watchtower', 'range')) r *= 1 + BALANCE.synergy.watchtowerRangeArcherRange;
-  if (Math.hypot(u.x - s.castle.x, u.z - s.castle.z) < C.stationRadius + 0.8) r += C.stationRangeBonus;
+  if (Math.abs(u.x - s.castle.x) < C.stationX + 0.5 && Math.abs(u.z - s.castle.z) < C.stationZ + 0.5) r += C.stationRangeBonus;
   return r;
 }
 
@@ -752,6 +752,8 @@ export class Sim {
     const k = this.grid.index(cx, cz);
     if (k < 0 || this.grid.cells[k] !== 0) return false;
     if (distToCastle(s, cx + 0.5, cz + 0.5) < 1) return false;
+    // The railway bed stays clear: the castle has to roll along it.
+    if (Math.abs(cz + 0.5) < BALANCE.world.roadHalfWidth + 0.5) return false;
     if (s.structs.some((st) => st.cx === cx && st.cz === cz)) return false;
     if (BALANCE.structs[type].blocks && s.units.some((u) => !u.inside && Math.floor(u.x) === cx && Math.floor(u.z) === cz)) return false;
     return true;
@@ -1817,7 +1819,7 @@ export class Sim {
       const archers = s.units.filter((x) => x.type === 'archer' && !x.order);
       const i = archers.indexOf(u);
       const a = (i / Math.max(1, archers.length)) * Math.PI * 2 + 0.4;
-      anchor = { x: c.x + Math.cos(a) * C.stationRadius, z: c.z + Math.sin(a) * C.stationRadius };
+      anchor = { x: c.x + Math.cos(a) * C.stationX, z: c.z + Math.sin(a) * C.stationZ };
     } else {
       // Melee stands guard on the side where monsters come from.
       const a = this.guardAngle(u);

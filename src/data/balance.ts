@@ -129,7 +129,9 @@ export const BALANCE = {
     tier2Cost: { wood: 200, stone: 100, gold: 50 } as Cost,
     slotsByTier: [4, 8],
     maxSlots: 12,
-    stationRadius: 4.2, // archers stand on the castle wall here
+    // Archers stand along the edge of the castle deck (an ellipse of these half-sizes).
+    stationX: 2.9,
+    stationZ: 1.95,
     stationRangeBonus: 2,
     fireChancePerNight: 0.45,
     fireDps: 4,

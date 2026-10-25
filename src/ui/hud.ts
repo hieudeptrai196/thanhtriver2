@@ -13,7 +13,7 @@ import {
 } from '../data/balance';
 import { t, type MessageKey } from '../i18n';
 import type { GameRenderer } from '../render/renderer';
-import { canAfford, castleLoad, foodDawns, loadCapacity, loadLevel, storageCap, structCost, unitCost, groupCounts, incomePerMin, popCap, popUsed, resourcePctOf, score, slotCount, synergySlots, SLOT_POS, type Sim } from '../sim/sim';
+import { canAfford, castleLoad, foodDawns, foodNeed, refundShare, travelSpeed, loadCapacity, loadLevel, storageCap, structCost, unitCost, groupCounts, incomePerMin, popCap, popUsed, resourcePctOf, score, slotCount, synergySlots, SLOT_POS, type Sim } from '../sim/sim';
 import type { Command, GameEvent, LaborRes } from '../sim/types';
 
 export type Mode =
@@ -41,6 +41,9 @@ export interface GameCtl {
 }
 
 const RES_ICON: Record<Res, string> = { wood: '🪵', stone: '🪨', food: '🍖', gold: '🪙' };
+// Frequent events the HUD or the dawn recap already show.
+const TOAST_SKIP = new Set(['msg.wave', 'msg.unitLost', 'msg.nightPlan', 'msg.cargoDropped', 'msg.dusk']);
+const TOAST_INFO = new Set(['msg.tierUp', 'msg.bossDown', 'msg.victory', 'msg.strangers', 'msg.arrived', 'msg.fireOut']);
 const SKILLS: AbilityId[] = ['arrowRain', 'bell', 'seal', 'reserve', 'patch'];
 const SKILL_KEY: Record<AbilityId, string> = { arrowRain: 'Q', bell: 'E', seal: 'Z', reserve: 'X', patch: 'V' };
 
@@ -55,7 +58,9 @@ export function costText(cost: Cost): string {
   return (Object.keys(cost) as Res[]).map((r) => `${RES_ICON[r]}${cost[r]}`).join(' ');
 }
 
+const TERRAIN_ICON: Record<string, string> = { plains: '🌾', forest: '🌲', canyon: '⛰' };
 const UNIT_ICON: Record<string, string> = { peasant: '🌾', builder: '🔨', spear: '🗡', shield: '🛡', archer: '🏹' };
+const PATTERN_ICON: Record<string, string> = { breach: '🔨', harass: '🐺', split: '⇄', ranged: '🏹', siege: '⏳', boss: '💀' };
 const SKILL_ICON: Record<AbilityId, string> = { arrowRain: '🎯', bell: '🔔', seal: '🚪', reserve: '🪖', patch: '🔧' };
 
 /** Button label as icon + name + extra; the name hides on small screens. Only touches the DOM when it changes. */
@@ -199,13 +204,17 @@ export class Hud {
     ecoBtn.title = t('eco.help');
     ecoBtn.onclick = () => this.toggleEco();
     actions.append(this.selectBtn, ecoBtn, buildBtn, roomsBtn, recallBtn, this.dumpBtn, this.runBtn);
-    const release = el('button', 'btn small', `↺ ${t('hud.release')}`);
+    const release = el('button', 'btn small', '↺');
+    release.title = t('hud.release');
     release.onclick = () => ctl.send({ t: 'releaseUnits' });
-    const deselect = el('button', 'btn small', `✕ ${t('hud.deselect')}`);
+    const deselect = el('button', 'btn small', '✕');
+    deselect.title = t('hud.deselect');
     deselect.onclick = () => ctl.send({ t: 'selectUnits', ids: [] });
-    this.pickBar.append(this.pickText, release, deselect);
+    // One row: who is picked, tactical orders, back to auto / deselect, squad assignment.
+    this.pickBar.append(this.pickText, this.orderBar, release, deselect);
     // Squads 1–5 (GDD v1.2 §8.1): tap to select; with units picked, "assign" puts them in a squad.
-    const assign = el('span', 'assign', t('hud.assign'));
+    const assign = el('span', 'assign', '⚑');
+    assign.title = t('hud.assign');
     this.pickBar.append(assign);
     for (let n = 1; n <= BALANCE.squads.count; n++) {
       const a = el('button', 'btn tiny', String(n));
@@ -245,7 +254,7 @@ export class Hud {
     this.dawn = el('div', 'modal dawn hidden');
     this.over = el('div', 'modal over hidden');
     this.pauseBanner.textContent = t('hud.paused');
-    this.root.append(top, this.planEl, this.box, this.pickBar, this.squadBar, this.orderBar, this.arrows, this.hint, this.toasts, this.pauseBanner, bottom, this.rooms, this.build, this.eco, this.dawn, this.over, this.fps);
+    this.root.append(top, this.planEl, this.box, this.pickBar, this.squadBar, this.arrows, this.hint, this.toasts, this.pauseBanner, bottom, this.rooms, this.build, this.eco, this.dawn, this.over, this.fps);
   }
 
   private sim!: Sim;
@@ -311,17 +320,21 @@ export class Hud {
   }
 
   toast(text: string, level: GameEvent['level'] = 'info'): void {
+    // The same message twice in a row is not repeated.
+    if (this.toasts.firstElementChild?.textContent === text) return;
     const e = el('div', `toast ${level}`, text);
     this.toasts.prepend(e);
-    while (this.toasts.children.length > 4) this.toasts.lastElementChild!.remove();
-    setTimeout(() => e.classList.add('fade'), 2200);
-    setTimeout(() => e.remove(), 2800);
+    while (this.toasts.children.length > 3) this.toasts.lastElementChild!.remove();
+    setTimeout(() => e.classList.add('fade'), 1800);
+    setTimeout(() => e.remove(), 2400);
   }
 
   onEvents(events: GameEvent[]): void {
     for (const e of events) {
       if (!e.key.startsWith('msg.')) continue;
-      if (e.key === 'msg.unitReady' || e.key === 'msg.dayStarts') continue;
+      // Only warnings and a few milestones get a toast; the HUD already shows the rest.
+      if (e.level !== 'warn' && e.level !== 'danger' && !TOAST_INFO.has(e.key)) continue;
+      if (TOAST_SKIP.has(e.key)) continue;
       this.toast(t(e.key as MessageKey, e.params), e.level);
     }
   }
@@ -338,26 +351,29 @@ export class Hud {
     this.popEl.textContent = `👥 ${s.units.length}/${popCap(s)}`;
     // Food forecast: how many dawns the stock still covers (GDD v1.2 §6.5).
     const dawns = foodDawns(s);
-    const foodTxt = dawns >= 9 ? t('hud.foodOk') : t('hud.foodDawns', { n: dawns });
+    const foodTxt = dawns >= 9 ? '☀✓' : `☀${dawns}`;
     if (this.foodEl.textContent !== foodTxt) this.foodEl.textContent = foodTxt;
     this.foodEl.classList.toggle('bad', dawns < 2);
     this.foodEl.title = t('eco.foodNeed', { need: s.units.length * BALANCE.foodPerUnit });
     const core = c.coreHp / c.coreMax;
     this.coreBar.style.width = `${core * 100}%`;
     this.coreBar.classList.toggle('low', core < BALANCE.warnings.coreLow);
-    this.coreTxt.textContent = `${t('hud.core')} ${Math.ceil(c.coreHp)}`;
+    this.coreTxt.textContent = `❤ ${Math.ceil(c.coreHp)}`;
+    this.coreTxt.parentElement!.title = t('hud.core');
     this.wallBar.style.width = `${(c.wallHp / c.wallMax) * 100}%`;
     this.wallBar.classList.toggle('low', c.wallHp / c.wallMax < BALANCE.warnings.wallLow);
-    this.wallTxt.textContent = `${t('hud.wall')} ${Math.ceil(c.wallHp)}`;
+    this.wallTxt.textContent = `🧱 ${Math.ceil(c.wallHp)}`;
+    this.wallTxt.parentElement!.title = t('hud.wall');
     const wheelBroken = c.wheelHp <= 0;
-    this.wheelEl.textContent = wheelBroken ? `⚠ ${t('hud.wheelBroken')}` : `⚙ ${Math.round((c.wheelHp / c.wheelMax) * 100)}%`;
+    this.wheelEl.textContent = wheelBroken ? '⚙✕' : `⚙ ${Math.round((c.wheelHp / c.wheelMax) * 100)}%`;
+    this.wheelEl.title = wheelBroken ? t('hud.wheelBroken') : t('hud.wheel');
     this.wheelEl.classList.toggle('bad', wheelBroken);
     // Castle load (GDD v1.2 §5.2): light / heavy / very heavy / overloaded.
     const lv = loadLevel(s);
-    const loadTxt = `⚖ ${t(`load.${lv}` as MessageKey)}`;
+    const loadTxt = lv === 'light' ? '⚖' : `⚖ ${t(`load.${lv}` as MessageKey)}`;
     if (this.loadEl.textContent !== loadTxt) this.loadEl.textContent = loadTxt;
     this.loadEl.className = `tb-load ${lv}`;
-    this.loadEl.title = t('load.help', { load: Math.round(castleLoad(s)), cap: Math.round(loadCapacity(s)), store: storageCap(s) });
+    this.loadEl.title = `${t(`load.${lv}` as MessageKey)} · ${t('load.help', { load: Math.round(castleLoad(s)), cap: Math.round(loadCapacity(s)), store: storageCap(s) })}`;
     this.dumpBtn.style.display = lv === 'overloaded' && s.phase === 'day' ? '' : 'none';
     const spd = `x${this.ctl.speed}`;
     if (this.speedBtn.textContent !== spd) this.speedBtn.textContent = spd;
@@ -372,10 +388,17 @@ export class Hud {
     // Hand-picked units.
     this.selectBtn.classList.toggle('on', this.ctl.selectMode);
     const picked = s.units.filter((u) => s.selectedIds.includes(u.id));
-    this.pickBar.classList.toggle('show', picked.length > 0);
+    const groupSoldier = s.selected >= 0 && SOLDIER_TYPES.includes(UNIT_TYPES[s.selected]);
+    this.pickBar.classList.toggle('show', picked.length > 0 || groupSoldier);
+    this.root.classList.toggle('picking', picked.length > 0 || groupSoldier);
+    if (!picked.length && groupSoldier) {
+      const type = UNIT_TYPES[s.selected];
+      const txt = `${UNIT_ICON[type]}${groupCounts(s)[type]}`;
+      if (this.pickText.textContent !== txt) this.pickText.textContent = txt;
+    }
     if (picked.length) {
       const by = UNIT_TYPES.map((type) => [type, picked.filter((u) => u.type === type).length] as const).filter(([, n]) => n > 0);
-      const txt = `${t('hud.picked', { n: picked.length })}: ${by.map(([type, n]) => `${UNIT_ICON[type]}${n}`).join(' ')}`;
+      const txt = by.map(([type, n]) => `${UNIT_ICON[type]}${n}`).join(' ');
       if (this.pickText.textContent !== txt) this.pickText.textContent = txt;
     }
 
@@ -423,18 +446,13 @@ export class Hud {
     // Hint line.
     const m = this.ctl.mode;
     let hint = '';
-    if (this.ctl.auto) hint = t('hud.autoOn');
-    else if (m.kind === 'build') hint = t('hud.buildMode', { struct: m.type });
+    if (m.kind === 'build') hint = t('hud.buildMode', { struct: m.type });
     else if (m.kind === 'dismantle') hint = t('hud.dismantleMode');
     else if (m.kind === 'skill') hint = t('hud.targetSkill', { skill: m.id });
-    else if (m.kind === 'order') hint = t(`order.help.${m.mode}` as MessageKey);
-    else if (c.moving) hint = t('hud.moving', { s: Math.ceil(Math.abs(c.destX - c.x) / (BALANCE.castle.moveSpeed * s.mods.moveSpeed)) });
-    else if (canRun) hint = t('hud.toDest');
-    else if (c.fire > 0) hint = t('hud.fire');
+    else if (m.kind === 'order') hint = t(`order.pick.${m.mode}` as MessageKey);
+    else if (c.moving) hint = `⏱ ${Math.ceil(Math.abs(c.destX - c.x) / Math.max(0.01, travelSpeed(s)))}s`;
+    else if (c.fire > 0) hint = `🔥 ${t('hud.fire')}`;
     else if (s.phase === 'night' && s.plan && s.monsters.length === 0 && s.plan.waves.some((w) => w.spawned < w.count)) hint = t('hud.rest');
-    else if (s.selectedIds.length) hint = t('hud.pickedHint');
-    else if (this.ctl.selectMode) hint = t('hud.selectModeOn');
-    else if (s.selected >= 0) hint = t(`unit.hint.${UNIT_TYPES[s.selected]}` as MessageKey);
     if (this.hint.textContent !== hint) this.hint.textContent = hint;
     this.hint.classList.toggle('show', hint !== '');
 
@@ -461,13 +479,16 @@ export class Hud {
     this.planSig = sig;
     this.planEl.replaceChildren();
     if (!show) return;
-    const names = plan!.patterns.map((p) => t(`pattern.${p}` as MessageKey)).join(' + ');
-    const est = plan!.confirmed ? t('plan.confirmed') : t('plan.estimated', { lo: Math.round(plan!.total * 0.8), hi: Math.round(plan!.total * 1.2) });
-    this.planEl.append(el('b', '', t('plan.title', { names })), el('small', '', est));
+    // One chip per problem; the explanation is in the tooltip so the screen stays clear.
     for (const p of plan!.patterns) {
-      const hint = t(`pattern.hint.${p}` as MessageKey, { dir: plan!.harassDir ?? plan!.dirs[0] });
-      this.planEl.append(el('div', '', `• ${hint}`));
+      const chip = el('span', 'plan-chip', `${PATTERN_ICON[p]} ${t(`pattern.${p}` as MessageKey)}`);
+      chip.title = t(`pattern.hint.${p}` as MessageKey, { dir: plan!.harassDir ?? plan!.dirs[0] });
+      this.planEl.append(chip);
     }
+    const est = plan!.confirmed ? `👁 ${plan!.total}` : `≈ ${Math.round(plan!.total * 0.8)}–${Math.round(plan!.total * 1.2)}`;
+    const count = el('span', 'plan-count', est);
+    count.title = plan!.confirmed ? t('plan.confirmed') : t('plan.estimated', { lo: Math.round(plan!.total * 0.8), hi: Math.round(plan!.total * 1.2) });
+    this.planEl.append(count);
   }
 
   private updateArrows(sim: Sim, renderer: GameRenderer, w: number, h: number): void {
@@ -488,7 +509,9 @@ export class Hud {
       const p = renderer.project(s.castle.x + dx * 30, s.castle.z + dz * 30, w, h);
       const margin = 56;
       const x = Math.max(margin, Math.min(w - margin, p.x));
-      const y = Math.max(margin + 40, Math.min(h - 150, p.y));
+      // Keep clear of the bars at the bottom (their height is in --bb) and the floating bars above them.
+      const bb = parseFloat(this.root.style.getPropertyValue('--bb')) || 110;
+      const y = Math.max(margin + 40, Math.min(h - bb - 150, p.y));
       const threat = plan.threat?.[i] ?? 'mid';
       const many = threat === 'high';
       const label = `${t(`dir.${d}` as MessageKey)} · ${t(`threat.${threat}` as MessageKey)}`;
@@ -526,10 +549,12 @@ export class Hud {
         const room = s.rooms[i];
         if (i >= n) {
           cell.classList.add('locked');
-          cell.textContent = i < BALANCE.castle.slotsByTier[1] ? `🔒 ${t('room.locked')}` : '🔒';
+          cell.textContent = i < BALANCE.castle.slotsByTier[1] ? '🔒²' : '🔒';
+          cell.title = i < BALANCE.castle.slotsByTier[1] ? t('room.locked') : t('card.extraSlot');
         } else if (!room) {
           cell.classList.add('empty');
-          cell.textContent = `＋ ${t('room.empty')}`;
+          cell.textContent = '＋';
+          cell.title = t('room.pick');
           if (this.selectedSlot === i) cell.classList.add('sel');
           cell.onclick = () => {
             this.selectedSlot = this.selectedSlot === i ? -1 : i;
@@ -541,7 +566,8 @@ export class Hud {
           if (trains.length) {
             for (const type of trains) {
               const cost = unitCost(s, type);
-              const b = el('button', 'btn tiny', `${UNIT_ICON[type]} ${t('room.train', { unit: type })} ${costText(cost)}`);
+              const b = el('button', 'btn tiny', `${UNIT_ICON[type]} ${costText(cost)}`);
+              b.title = t('room.train', { unit: type });
               b.disabled = !canAfford(s, cost) || popUsed(s) >= popCap(s) || room.queue.length >= BALANCE.roomQueueMax;
               b.onclick = (ev) => {
                 ev.stopPropagation();
@@ -555,7 +581,8 @@ export class Hud {
             prog.append(fill);
             this.roomProgress[i] = fill;
             cell.append(q, prog);
-          } else cell.append(el('div', 'room-desc', t(`room.desc.${room.type}` as MessageKey)));
+          }
+          cell.title = t(`room.desc.${room.type}` as MessageKey);
           if (syn[i]) cell.append(el('div', 'syn-tag', `✦ ${t('room.synergy')}`));
         }
         grid.append(cell);
@@ -567,7 +594,8 @@ export class Hud {
         for (const type of ROOM_TYPES) {
           const def = BALANCE.rooms[type];
           const b = el('button', 'btn pick');
-          b.append(el('b', '', t(`room.${type}` as MessageKey)), el('span', 'cost', costText(def.cost)), el('small', '', t(`room.desc.${type}` as MessageKey)));
+          b.append(el('b', '', t(`room.${type}` as MessageKey)), el('span', 'cost', costText(def.cost)));
+          b.title = t(`room.desc.${type}` as MessageKey);
           b.disabled = def.tier > s.castle.tier || !canAfford(s, def.cost);
           const slot = this.selectedSlot;
           b.onclick = () => {
@@ -579,7 +607,9 @@ export class Hud {
         this.rooms.append(pick);
       }
       const foot = el('div', 'panel-foot');
-      foot.append(el('small', 'syn-help', `✦ ${t('room.synergy.help')}`));
+      const synHelp = el('small', 'syn-help', `✦ ${t('room.synergy')}`);
+      synHelp.title = t('room.synergy.help');
+      foot.append(synHelp);
       if (s.castle.tier < 2) {
         const up = el('button', 'btn', `⬆ ${t('room.tier2')} ${costText(BALANCE.castle.tier2Cost)}`);
         up.disabled = !canAfford(s, BALANCE.castle.tier2Cost);
@@ -600,13 +630,20 @@ export class Hud {
   private renderEco(sim: Sim): void {
     const s = sim.state;
     const resList: LaborRes[] = ['food', 'wood', 'stone'];
-    const rows = resList.map((r) => ({
-      r,
-      p: s.labor[r],
-      inc: incomePerMin(s, r),
-      workers: s.units.filter((u) => u.type === 'peasant' && !u.inside && (u.workRes === r || (u.order && u.carryRes === r))).length,
-      left: Math.round(resourcePctOf(s, s.castle.x, r) * 100),
-    }));
+    const rows = resList.map((r) => {
+      const crew = s.units.filter((u) => u.type === 'peasant' && !u.inside && (u.workRes === r || (u.order && u.carryRes === r)));
+      // Congestion (GDD v1.2 §6.4): expected delivery from trip length vs what actually arrived.
+      const trip = crew.map((u) => {
+        const node = s.nodes.find((n) => n.id === u.targetId);
+        return node ? Math.hypot(node.x - s.castle.x, node.z - s.castle.z) : 12;
+      });
+      const avg = trip.length ? trip.reduce((a, b) => a + b, 0) / trip.length : 12;
+      const P = BALANCE.units.peasant;
+      const expected = (crew.length * P.carry * 60) / (P.gatherTime + (2 * avg) / P.speed);
+      const inc = incomePerMin(s, r);
+      const jam = s.phase === 'day' && s.phaseTime > BALANCE.economy.incomeWindow && crew.length >= 2 && inc < expected * 0.4;
+      return { r, p: s.labor[r], inc, workers: crew.length, left: Math.round(resourcePctOf(s, s.castle.x, r) * 100), jam };
+    });
     const sig = JSON.stringify([rows, foodDawns(s), s.units.length]);
     if (sig === this.ecoSig) return;
     this.ecoSig = sig;
@@ -616,11 +653,14 @@ export class Hud {
     const close = el('button', 'btn small', '✕');
     close.onclick = () => this.toggleEco(false);
     head.append(close);
-    this.eco.append(head, el('div', 'panel-sub', t('eco.help')));
+    this.eco.append(head);
+    head.title = t('eco.help');
     for (const row of rows) {
       const line = el('div', 'eco-row');
       const name = el('div', 'eco-name');
-      name.append(el('b', '', `${RES_ICON[row.r]} ${t(`res.${row.r}` as MessageKey)}`), el('small', '', `${t('eco.perMin', { n: row.inc })} · ${t('eco.workers', { n: row.workers })} · ${t('eco.left', { pct: row.left })}`));
+      const sub = el('small', '', `📈${row.inc} · 👷${row.workers} · ⛏${row.left}%`);
+      sub.title = `${t('eco.perMin', { n: row.inc })} · ${t('eco.workers', { n: row.workers })} · ${t('eco.left', { pct: row.left })}`;
+      name.append(el('b', '', `${RES_ICON[row.r]} ${t(`res.${row.r}` as MessageKey)}`), sub);
       const prio = el('div', 'eco-prio');
       for (let p = 0; p <= 3; p++) {
         const b = el('button', 'btn tiny', t(`eco.p${p}` as MessageKey));
@@ -630,11 +670,14 @@ export class Hud {
       }
       line.append(name, prio);
       if (row.p > 0 && row.left === 0) line.append(el('div', 'warn small-warn', t('eco.none', { res: row.r })));
+      else if (row.jam) line.append(el('div', 'warn small-warn', `⚠ ${t('eco.jam')}`));
       this.eco.append(line);
     }
     const need = s.units.length * BALANCE.foodPerUnit;
     const dawns = foodDawns(s);
-    this.eco.append(el('div', dawns < 2 ? 'warn' : 'panel-sub', t('eco.food', { n: dawns, need })));
+    const foot = el('div', dawns < 2 ? 'warn' : 'panel-sub', `☀${dawns} · 🍖${need}/☀`);
+    foot.title = t('eco.food', { n: dawns, need });
+    this.eco.append(foot);
   }
 
   private renderBuild(sim: Sim): void {
@@ -661,14 +704,16 @@ export class Hud {
     for (const type of STRUCT_TYPES) {
       const cost = structCost(s, type);
       const b = el('button', 'btn pick');
-      b.append(el('b', '', t(`struct.${type}` as MessageKey)), el('span', 'cost', costText(cost)), el('small', '', t(`struct.desc.${type}` as MessageKey)));
+      b.append(el('b', '', t(`struct.${type}` as MessageKey)), el('span', 'cost', costText(cost)));
+      b.title = t(`struct.desc.${type}` as MessageKey);
       b.disabled = !canAfford(s, cost);
       b.classList.toggle('on', this.ctl.mode.kind === 'build' && this.ctl.mode.type === type);
       b.onclick = () => this.ctl.setMode(this.ctl.mode.kind === 'build' && this.ctl.mode.type === type ? { kind: 'none' } : { kind: 'build', type });
       list.append(b);
     }
     const dis = el('button', 'btn pick');
-    dis.append(el('b', '', `⛏ ${t('struct.dismantle')}`), el('small', '', t('hud.dismantleMode')));
+    dis.append(el('b', '', `⛏ ${t('struct.dismantle')}`));
+    dis.title = t('hud.dismantleMode');
     dis.classList.toggle('on', this.ctl.mode.kind === 'dismantle');
     dis.onclick = () => this.ctl.setMode(this.ctl.mode.kind === 'dismantle' ? { kind: 'none' } : { kind: 'dismantle' });
     list.append(dis);
@@ -695,11 +740,16 @@ export class Hud {
     const st = s.nightStats;
     box.append(el('h2', '', t('dawn.title', { n: s.stats.nightsSurvived })));
     const sum = el('div', 'summary');
+    const stat = (icon: string, n: number, tip: string) => {
+      const e = el('span', '', `${icon} ${n}`);
+      e.title = tip;
+      return e;
+    };
     sum.append(
-      el('span', '', t('dawn.kills', { n: st.kills })),
-      el('span', '', t('dawn.lost', { n: st.lost })),
-      el('span', '', t('dawn.gold', { n: st.gold })),
-      el('span', '', t('dawn.food', { n: st.food })),
+      stat('⚔', st.kills, t('dawn.kills', { n: st.kills })),
+      stat('✝', st.lost, t('dawn.lost', { n: st.lost })),
+      stat('🪙', st.gold, t('dawn.gold', { n: st.gold })),
+      stat('🍖', st.food, t('dawn.food', { n: st.food })),
     );
     box.append(sum);
     if (st.hungry) box.append(el('div', 'warn', t('dawn.hungry')));
@@ -729,22 +779,34 @@ export class Hud {
       const row = el('div', 'cards routes');
       for (const r of s.routes) {
         const b = el('button', `card route ${r.id === 0 ? 'stay' : 'go'}`);
+        b.title = t(`terrain.desc.${r.terrain}` as MessageKey);
         b.append(el('b', '', r.id === 0 ? `🏰 ${t('dawn.stay')}` : `➡ ${t(r.id === 1 ? 'dawn.ahead' : 'dawn.aheadMany', { n: r.id })}`));
-        b.append(el('div', 'terrain', `${t(`terrain.${r.terrain}` as MessageKey)} — ${t(`terrain.desc.${r.terrain}` as MessageKey)}`));
-        b.append(el('div', '', r.id === 0 ? t('dawn.resLeft', { pct: Math.round(r.resourcePct * 100) }) : t('dawn.resFull')));
-        if (r.exhausted) b.append(el('div', 'bad', `⚠ ${t('dawn.exhausted')}`));
-        b.append(el('div', '', t('dawn.main', { res: r.mainRes })));
-        b.append(el('div', r.id === 0 ? 'bad' : '', t('dawn.dirs', { n: r.dirs })));
-        const danger = el('div', 'danger', `${t('dawn.danger')} ${'●'.repeat(r.danger)}${'○'.repeat(5 - r.danger)}`);
-        b.append(danger);
-        if (r.id > 0) b.append(el('div', loadLevel(s) === 'overloaded' ? 'bad' : '', loadLevel(s) === 'overloaded' ? t('dawn.overloaded') : t('dawn.travel', { s: r.travel })));
-        b.append(el('small', r.id === 0 ? 'good' : 'bad', r.id === 0 ? t('dawn.keep') : t('dawn.leave')));
+        b.append(el('div', 'terrain', `${TERRAIN_ICON[r.terrain]} ${t(`terrain.${r.terrain}` as MessageKey)} · ${RES_ICON[r.mainRes]}`));
+        const chips = el('div', 'route-chips');
+        const chip = (txt: string, tip: string, cls = '') => {
+          const c = el('span', `chip ${cls}`, txt);
+          c.title = tip;
+          chips.append(c);
+        };
+        chip(`⛏ ${r.id === 0 ? Math.round(r.resourcePct * 100) + '%' : '100%'}`, r.id === 0 ? t('dawn.resLeft', { pct: Math.round(r.resourcePct * 100) }) : t('dawn.resFull'), r.exhausted ? 'bad' : '');
+        chip(`⚔ ${r.dirs}`, t('dawn.dirs', { n: r.dirs }), r.id === 0 ? 'bad' : '');
+        chip('●'.repeat(r.danger) + '○'.repeat(5 - r.danger), t('dawn.danger'), 'danger');
+        const built = s.structs.length;
+        if (r.id === 0) chip(`🏗 ${built}`, t('dawn.keep'), 'good');
+        else {
+          const over = loadLevel(s) === 'overloaded';
+          chip(over ? '⚖ ✕' : `⏱ ${r.travel}s`, over ? t('dawn.overloaded') : t('dawn.travel', { s: r.travel }), over ? 'bad' : '');
+          if (built) chip(`🏗 −${built} ↩${Math.round(refundShare(s) * 100)}%`, t('dawn.leave'), 'bad');
+        }
+        chip(`☀${Math.min(9, foodDawns(s))}`, t('eco.food', { n: foodDawns(s), need: foodNeed(s) }), foodDawns(s) < 2 ? 'bad' : '');
+        b.append(chips);
+        if (r.exhausted) b.append(el('div', 'bad small', `⚠ ${t('dawn.exhausted')}`));
         b.onclick = () => !fresh() && this.ctl.send({ t: 'pickRoute', id: r.id });
         row.append(b);
       }
       box.append(row);
     }
-    box.append(el('div', 'saved', `💾 ${t('dawn.saved')}`));
+    box.append(el('div', 'saved', '💾'));
     this.dawn.append(box);
   }
 
@@ -762,6 +824,7 @@ export class Hud {
     if (st.cause.startsWith('breach:')) cause = t('recap.breach', { dir: t(`dir.${st.cause.slice(7)}` as MessageKey) });
     else if (st.cause === 'fire') cause = t('recap.fire');
     else if (st.cause === 'workersCaught') cause = t('recap.workers');
+    else if (st.coreDamage > 0) cause = t('recap.core');
     box.append(el('div', '', `${t('recap.break')}: ${cause}`));
     const todo: string[] = [];
     const need = s.units.length * BALANCE.foodPerUnit;
@@ -790,19 +853,37 @@ export class Hud {
     const won = s.phase === 'victory';
     box.append(el('h2', won ? 'good' : '', t(won ? 'over.victory' : 'over.title')));
     if (won) box.append(el('div', '', t('over.victoryText', { n: s.stats.nightsSurvived })));
-    box.append(
-      el('div', 'big-stat', t('over.nights', { n: s.stats.nightsSurvived })),
-      el('div', '', t('over.kills', { n: s.stats.kills })),
-      el('div', '', t('over.bosses', { n: s.stats.bosses })),
-      el('div', 'big-stat', t('over.score', { n: score(s) })),
+    const row = el('div', 'summary');
+    const stat = (icon: string, n: number, tip: string) => {
+      const e = el('span', '', `${icon} ${n}`);
+      e.title = tip;
+      return e;
+    };
+    row.append(
+      stat('🌙', s.stats.nightsSurvived, t('over.nights', { n: s.stats.nightsSurvived })),
+      stat('⚔', s.stats.kills, t('over.kills', { n: s.stats.kills })),
+      stat('💀', s.stats.bosses, t('over.bosses', { n: s.stats.bosses })),
     );
+    box.append(row, el('div', 'big-stat', t('over.score', { n: score(s) })));
     if (this.ctl.gameOverInfo?.best) box.append(el('div', 'good', `🏆 ${t('over.best')}`));
     const btns = el('div', 'btn-row');
     const again = el('button', 'btn big', t('over.again'));
     again.onclick = () => this.ctl.restart();
     const menu = el('button', 'btn', t('over.menu'));
     menu.onclick = () => this.ctl.toMenu();
-    btns.append(again, menu);
+    // Local run log (GDD v1.2 §16.1): nothing is uploaded; the player saves the file if they want to share it.
+    const log = el('button', 'btn', '📥');
+    log.title = t('over.log');
+    log.onclick = () => {
+      const data = { seed: s.seed, mode: s.mode, doctrine: s.doctrine, stats: s.stats, score: score(s), hash: sim.hash(), history: s.history, saveVersion: s.version };
+      const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `thanhtri-${s.seed}-n${s.stats.nightsSurvived}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+    btns.append(again, menu, log);
     box.append(btns);
     this.over.append(box);
   }
