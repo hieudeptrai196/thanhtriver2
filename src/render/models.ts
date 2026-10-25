@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
-// KayKit models (CC0, Kay Lousberg, www.kaylousberg.com) and Kenney Nature Kit (CC0, www.kenney.nl). See CREDITS.md.
+// KayKit models (CC0, Kay Lousberg, www.kaylousberg.com), Kenney Nature/Castle/Fantasy Town kits (CC0, www.kenney.nl)
+// and Quaternius Ultimate Fantasy RTS (CC0, quaternius.com). See CREDITS.md.
 // Characters are baked into a handful of static poses per animation so crowds can be drawn with InstancedMesh.
 
 export interface Baked {
@@ -18,8 +19,6 @@ export interface CharModel {
 
 export type CharName = 'peasant' | 'builder' | 'spear' | 'archer' | 'fast' | 'brute' | 'ranged';
 export type PropName =
-  | 'castle'
-  | 'tower'
   | 'fence'
   | 'treeA'
   | 'treeB'
@@ -28,7 +27,6 @@ export type PropName =
   | 'rockB'
   | 'rockC'
   | 'mountain'
-  | 'flag'
   | 'hillsA'
   | 'hillsB'
   | 'peak'
@@ -54,10 +52,60 @@ export type DecorName =
   | 'wheat'
   | 'corn';
 
+// Medieval buildings and props (files m_*.glb), sized for the scene: [axis, size] like PROP_SIZE.
+export const MED_SIZE = {
+  // Castle Kit
+  // Modular pieces on Kenney's 1-unit grid keep their origin and get one shared scale ('s') so they stack.
+  stoneNarrow: ['s', 1],
+  portcullis: ['s', 1],
+  towerBase: ['s', 1],
+  towerMid: ['s', 1],
+  towerDoor: ['s', 1],
+  towerTop: ['s', 1],
+  towerRoof: ['s', 1],
+  hexTower: ['s', 1],
+  hexRoof: ['s', 1],
+  pennant: ['h', 1.8],
+  ruinTrebuchet: ['w', 3.6],
+  ruinRam: ['w', 2.8],
+  ruinTower: ['w', 3.2],
+  // Fantasy Town Kit
+  windmill: ['h', 6.5],
+  cart: ['w', 1.6],
+  lantern: ['h', 1.4],
+  bannerRed: ['h', 2.0],
+  fenceBroken: ['w', 1.6],
+  wheel: ['h', 0.9],
+  // Ultimate Fantasy RTS (Quaternius)
+  house: ['w', 2.2],
+  house2: ['w', 2.2],
+  hut: ['w', 2.2],
+  barracks: ['w', 2.4],
+  barracks2: ['w', 2.4],
+  range: ['w', 2.4],
+  range2: ['w', 2.4],
+  storage: ['w', 2.4],
+  storage2: ['w', 2.4],
+  market: ['w', 2.4],
+  market2: ['w', 2.4],
+  watch: ['h', 3.6],
+  watch2: ['h', 3.9],
+  barrel: ['h', 0.6],
+  crates: ['w', 1.0],
+  logs: ['w', 1.4],
+  mill: ['h', 6],
+  farm: ['w', 5],
+  mine: ['w', 4],
+  towerHouse: ['h', 4.5],
+  pines: ['w', 4.5],
+} satisfies Record<string, ['h' | 'w' | 's', number]>;
+export type MedName = keyof typeof MED_SIZE;
+
 export interface Models {
   chars: Record<CharName, CharModel>;
   props: Record<PropName, Baked>;
   decor: Record<DecorName, Baked>;
+  med: Record<MedName, Baked>;
 }
 
 // Kenney Nature Kit pieces, sized for the scene.
@@ -96,8 +144,6 @@ export const ACT_FRAMES = 4;
 
 // Target size of each prop: [axis, size]. 'h' = height, 'w' = largest horizontal extent.
 const PROP_SIZE: Record<PropName, ['h' | 'w', number]> = {
-  castle: ['h', 7.4],
-  tower: ['h', 3.4],
   fence: ['w', 1.15],
   treeA: ['h', 2.8],
   treeB: ['h', 2.6],
@@ -106,7 +152,6 @@ const PROP_SIZE: Record<PropName, ['h' | 'w', number]> = {
   rockB: ['w', 1.4],
   rockC: ['w', 1.3],
   mountain: ['w', 3.6],
-  flag: ['h', 1.6],
   hillsA: ['w', 10],
   hillsB: ['w', 10],
   peak: ['w', 12],
@@ -116,7 +161,7 @@ const PROP_SIZE: Record<PropName, ['h' | 'w', number]> = {
 
 // Kenney Nature Kit colours retuned to match the game's ground palette (by material name).
 const KENNEY_COLORS: Record<string, number> = {
-  grass: 0x5f9a3a,
+  grass: 0x5c7a36,
   dirt: 0x8a6440,
   wood: 0xa0703f,
   woodDark: 0x6e4a2a,
@@ -131,15 +176,114 @@ const KENNEY_COLORS: Record<string, number> = {
   _defaultMat: 0x9a9a9e,
 };
 
+// Quaternius materials (by name) in an earthy medieval palette: dark timber, weathered stone, plaster, rust-red roofs.
+const MED_COLORS: Record<string, number> = {
+  Wood: 0x6b4a2e,
+  Wood_Light: 0x94704a,
+  Stone: 0x7a766c,
+  Stone_Light: 0xa49d8c,
+  Main: 0x8c3b28,
+  Red: 0x7a2018,
+  White: 0xd6c9a8,
+  Walls: 0xcbbb98,
+  Gold: 0xb08a3a,
+  Metal_Light: 0x5a5852,
+  Metal: 0x4a4038,
+  Green: 0x4f6a2a,
+  Yellow: 0xa8903a,
+  Fabric: 0xc4ad80,
+  Wheat: 0xc29c48,
+  Dirt: 0x5e4a30,
+  Snow: 0xb4b0a4,
+  Water: 0x3e6670,
+};
+
+/** Kenney's colour atlas, shifted to the medieval palette: blue/purple → rust-red, pale sand → grey stone, teal → olive. */
+function medievalPixel(r: number, g: number, b: number): [number, number, number] {
+  const c = new THREE.Color(r / 255, g / 255, b / 255);
+  const hsl = { h: 0, s: 0, l: 0 };
+  c.getHSL(hsl);
+  let { h, s, l } = hsl;
+  const deg = h * 360;
+  if (s > 0.25 && deg >= 190 && deg <= 300) {
+    h = 8 / 360;
+    s = Math.min(0.5, s * 0.75);
+    l *= 0.78;
+  } else if (s > 0.45 && (deg < 12 || deg > 340)) {
+    l *= 0.8;
+    s *= 0.85;
+  } else if (deg < 55 && l > 0.6) {
+    h = 36 / 360;
+    s = 0.1;
+    l *= 0.74;
+  } else if (deg < 55) {
+    s *= 0.72;
+    l *= 0.82;
+  } else if (deg >= 80 && deg < 190) {
+    h = 90 / 360;
+    s *= 0.6;
+    l *= 0.8;
+  } else s *= 0.6;
+  c.setHSL(h, s, l);
+  return [c.r * 255, c.g * 255, c.b * 255];
+}
+
+const recoloured = new Map<unknown, THREE.Texture>();
+function medievalMap(src: THREE.Texture): THREE.Texture {
+  const cached = recoloured.get(src.image);
+  if (cached) return cached;
+  const img = src.image as CanvasImageSource & { width: number; height: number };
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext('2d')!;
+  ctx.drawImage(img, 0, 0);
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const px = data.data;
+  for (let i = 0; i < px.length; i += 4) {
+    const [r, g, b] = medievalPixel(px[i], px[i + 1], px[i + 2]);
+    px[i] = r;
+    px[i + 1] = g;
+    px[i + 2] = b;
+  }
+  ctx.putImageData(data, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.flipY = src.flipY;
+  tex.colorSpace = src.colorSpace;
+  tex.magFilter = src.magFilter;
+  tex.minFilter = src.minFilter;
+  tex.wrapS = src.wrapS;
+  tex.wrapT = src.wrapT;
+  recoloured.set(src.image, tex);
+  return tex;
+}
+
+let medieval = false; // set while loading m_* files
+
 function toLambert(m: THREE.Material): THREE.Material {
   const src = m as THREE.MeshStandardMaterial;
+  if (medieval) {
+    const tuned = MED_COLORS[src.name];
+    if (tuned !== undefined) return new THREE.MeshLambertMaterial({ color: tuned });
+    if (src.map) {
+      // Kenney atlas: keep the per-texture transform (offset/repeat) on a clone of the recoloured texture.
+      const map = medievalMap(src.map).clone();
+      map.offset.copy(src.map.offset);
+      map.repeat.copy(src.map.repeat);
+      map.rotation = src.map.rotation;
+      map.center.copy(src.map.center);
+      map.needsUpdate = true;
+      return new THREE.MeshLambertMaterial({ map });
+    }
+  }
   const tuned = KENNEY_COLORS[src.name];
   if (tuned !== undefined) return new THREE.MeshLambertMaterial({ color: tuned, flatShading: true });
   if (src.name === 'Glow' || (src.emissive && src.emissive.getHex() !== 0 && !src.map)) {
     // Skeleton eyes: unlit so they glow in the dark.
     return new THREE.MeshBasicMaterial({ color: src.emissive?.getHex() || 0x60f0ff });
   }
-  return new THREE.MeshLambertMaterial({ map: src.map ?? null, color: src.map ? 0xffffff : src.color });
+  // KayKit atlas: a warm, slightly muted multiply so it sits in the medieval palette.
+  return new THREE.MeshLambertMaterial({ map: src.map ?? null, color: src.map ? 0xe8dfcf : src.color });
 }
 
 /** Bake every visible mesh under `root` (skinned or not) in its current pose into one geometry with material groups. */
@@ -235,8 +379,15 @@ function mergeWithGroups(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
   return merged;
 }
 
-/** Scale and centre so the model stands on y=0 at the origin with the requested size. */
-function normalize(geos: THREE.BufferGeometry[], axis: 'h' | 'w', size: number): void {
+/** Scale and centre so the model stands on y=0 at the origin with the requested size ('s': plain scale, origin kept). */
+function normalize(geos: THREE.BufferGeometry[], axis: 'h' | 'w' | 's', size: number): void {
+  if (axis === 's') {
+    for (const g of geos) {
+      g.scale(size, size, size);
+      g.computeBoundingSphere();
+    }
+    return;
+  }
   geos[0].computeBoundingBox();
   const b = geos[0].boundingBox!;
   const h = b.max.y - b.min.y;
@@ -279,12 +430,16 @@ async function loadChar(loader: GLTFLoader, base: string, name: CharName): Promi
   return { idle: wrap(idle), move: move.map(wrap), act: act.map(wrap) };
 }
 
-async function loadProp(loader: GLTFLoader, base: string, name: PropName | DecorName, decor = false): Promise<Baked> {
-  const gltf = await loader.loadAsync(`${base}${decor ? 'k_' : ''}${name}.glb`);
+async function loadProp(loader: GLTFLoader, base: string, name: PropName | DecorName | MedName, kind: 'prop' | 'decor' | 'med' = 'prop'): Promise<Baked> {
+  const prefix = kind === 'decor' ? 'k_' : kind === 'med' ? 'm_' : '';
+  const gltf = await loader.loadAsync(`${base}${prefix}${name}.glb`);
   const mats = new Map<THREE.Material, number>();
   const matList: THREE.Material[] = [];
+  medieval = kind === 'med';
   const geo = bake(gltf.scene, mats, matList);
-  const [axis, size] = decor ? DECOR_SIZE[name as DecorName] : PROP_SIZE[name as PropName];
+  medieval = false;
+  const [axis, size] =
+    kind === 'decor' ? DECOR_SIZE[name as DecorName] : kind === 'med' ? MED_SIZE[name as MedName] : PROP_SIZE[name as PropName];
   normalize([geo], axis, size);
   return { geo, materials: matList };
 }
@@ -295,14 +450,17 @@ export async function loadModels(): Promise<Models> {
   const charNames: CharName[] = ['peasant', 'builder', 'spear', 'archer', 'fast', 'brute', 'ranged'];
   const propNames = Object.keys(PROP_SIZE) as PropName[];
   const decorNames = Object.keys(DECOR_SIZE) as DecorName[];
-  const [chars, props, decor] = await Promise.all([
+  const medNames = Object.keys(MED_SIZE) as MedName[];
+  const [chars, props, decor, med] = await Promise.all([
     Promise.all(charNames.map((n) => loadChar(loader, base, n))),
     Promise.all(propNames.map((n) => loadProp(loader, base, n))),
-    Promise.all(decorNames.map((n) => loadProp(loader, base, n, true))),
+    Promise.all(decorNames.map((n) => loadProp(loader, base, n, 'decor'))),
+    Promise.all(medNames.map((n) => loadProp(loader, base, n, 'med'))),
   ]);
   return {
     chars: Object.fromEntries(charNames.map((n, i) => [n, chars[i]])) as Record<CharName, CharModel>,
     props: Object.fromEntries(propNames.map((n, i) => [n, props[i]])) as Record<PropName, Baked>,
     decor: Object.fromEntries(decorNames.map((n, i) => [n, decor[i]])) as Record<DecorName, Baked>,
+    med: Object.fromEntries(medNames.map((n, i) => [n, med[i]])) as Record<MedName, Baked>,
   };
 }

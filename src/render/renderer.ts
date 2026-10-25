@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { BALANCE, UNIT_TYPES, type MonsterType, type NodeType, type StructType, type UnitType } from '../data/balance';
-import { isLit, lights, type Sim } from '../sim/sim';
-import type { GameEvent, Vec } from '../sim/types';
+import { BALANCE, UNIT_TYPES, type MonsterType, type NodeType, type RoomType, type StructType, type UnitType } from '../data/balance';
+import { isLit, lights, slotCount, SLOT_POS, type Sim } from '../sim/sim';
+import type { GameEvent, GameState, Vec } from '../sim/types';
 import { hash01 } from '../sim/rng';
 import { chunkCenter, chunkTerrain } from '../sim/world';
 import { Terrain, terrainHeight } from './terrain';
@@ -16,13 +16,15 @@ import {
   wheelGeometry,
 } from './geometry';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ACT_FRAMES, loadModels, MOVE_FRAMES, type Baked, type CharModel, type DecorName, type Models } from './models';
+import { ACT_FRAMES, loadModels, MOVE_FRAMES, type Baked, type CharModel, type DecorName, type MedName, type Models } from './models';
 
 export interface Overlay {
   ghost: { type: StructType; pos: Vec; valid: boolean } | null;
   skillTarget: { pos: Vec; radius: number } | null;
 }
 
+// Medieval landmark models placed as countryside scenery.
+const LANDMARKS: MedName[] = ['windmill', 'mill', 'farm', 'cart', 'mine', 'towerHouse', 'pines', 'logs', 'ruinTrebuchet', 'ruinRam', 'ruinTower', 'wheel', 'fenceBroken'];
 const MAX_POINT_LIGHTS = 6;
 // Height of the castle deck where archers stand once the KayKit castle is loaded.
 const WALL_WALK_Y = 1.9;
@@ -203,10 +205,10 @@ export class GameRenderer {
   private railway: THREE.Group;
   private scenery: Instanced[] = [];
   private groves: Instanced[] = [];
+  private landmarks = new Map<MedName, Instanced>();
   private castle: THREE.Group;
   private wheels: THREE.Mesh[] = [];
   private fire: THREE.Mesh;
-  private core: THREE.Mesh;
   private units = {} as Record<UnitType, Crowd>;
   private monsters = {} as Record<MonsterType, Crowd>;
   private nodes = {} as Record<NodeType, Instanced[]>;
@@ -214,6 +216,9 @@ export class GameRenderer {
   private structs = {} as Record<StructType, Instanced>;
   private castleCode: THREE.Mesh;
   private flags: THREE.Group;
+  private roomGroup: THREE.Group | null = null;
+  private roomKey = '';
+  private keepTop = DECK_Y + 7;
   private models: Models | null = null;
   private motion = new Map<number, Motion>();
   private particles: Particle[] = [];
@@ -255,13 +260,13 @@ export class GameRenderer {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.5, 400);
-    this.scene.background = new THREE.Color(0x9cc8e8);
-    this.scene.fog = new THREE.Fog(0x9cc8e8, 60, 140);
+    this.scene.background = new THREE.Color(0xaabfc6);
+    this.scene.fog = new THREE.Fog(0xaabfc6, 60, 140);
 
     this.terrain = new Terrain(this.scene);
-    this.hemi = new THREE.HemisphereLight(0xdfefff, 0x6a5a40, 1.6);
+    this.hemi = new THREE.HemisphereLight(0xf0e6d4, 0x5e4c34, 1.6);
     this.scene.add(this.hemi);
-    this.sun = new THREE.DirectionalLight(0xfff2d8, 1.8);
+    this.sun = new THREE.DirectionalLight(0xffe4bc, 1.9);
     this.sun.position.set(-20, 40, 15);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
@@ -336,19 +341,18 @@ export class GameRenderer {
       this.castle.add(lamp);
       this.lanterns.push(lamp);
     }
-    // Smokestacks at the back; smoke is spawned from their tops.
-    for (const z of [-1.3, 1.3]) {
-      const stack = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.34, 2.2, 8), iron);
-      stack.position.set(-3.0, DECK_Y + 1.1, z);
+    // Stone chimneys in the back wall; smoke is spawned from their tops.
+    const chimStone = new THREE.MeshLambertMaterial({ color: 0x8a8274 });
+    const chimCap = new THREE.MeshLambertMaterial({ color: 0x4a3b2e });
+    for (const z of [-1.1, 1.1]) {
+      const stack = new THREE.Mesh(new THREE.BoxGeometry(0.5, 2.1, 0.5), chimStone);
+      stack.position.set(-3.1, DECK_Y + 1.05, z);
       stack.castShadow = true;
-      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.3, 0.3, 8), brass);
-      cap.position.set(-3.0, DECK_Y + 2.3, z);
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.16, 0.62), chimCap);
+      cap.position.set(-3.1, DECK_Y + 2.15, z);
       this.castle.add(stack, cap);
-      this.stacks.push(new THREE.Vector3(-3.0, DECK_Y + 2.5, z));
+      this.stacks.push(new THREE.Vector3(-3.1, DECK_Y + 2.3, z));
     }
-    this.core = new THREE.Mesh(new THREE.OctahedronGeometry(0.6, 0), new THREE.MeshBasicMaterial({ color: 0x60e0ff }));
-    this.core.position.y = 7.2;
-    this.castle.add(this.core);
     this.fire = new THREE.Mesh(new THREE.ConeGeometry(1.2, 2.4, 6), new THREE.MeshBasicMaterial({ color: 0xff6a20, transparent: true, opacity: 0.85 }));
     this.fire.position.y = 6.2;
     this.fire.visible = false; // fire is drawn with particles
@@ -435,10 +439,11 @@ export class GameRenderer {
     this.nodes.rock = [m.props.rockA, m.props.rockB, m.props.rockC].map((b) => new Instanced(b.geo, b.materials, max, this.scene));
     this.stumps.setModel(m.props.stump);
     this.structs.wall.setModel(m.props.fence);
-    this.structs.tower.setModel(m.props.tower);
+    this.structs.tower.setModel(m.med.watch);
     this.cliffs = [m.props.mountain, m.props.rockA, m.props.rockC].map((b) => new Instanced(b.geo, b.materials, 600, this.scene));
     this.scenery = [m.props.hillsA, m.props.hillsB, m.props.peak].map((b) => new Instanced(b.geo, b.materials, 80, this.scene));
     this.groves = [m.props.groveA, m.props.groveB].map((b) => new Instanced(b.geo, b.materials, 120, this.scene));
+    for (const n of LANDMARKS) this.landmarks.set(n, new Instanced(m.med[n].geo, m.med[n].materials, 40, this.scene));
     // Kenney Nature Kit: ground clutter (no shadows, it is small and plentiful) and crop fields for food.
     for (const [name, b] of Object.entries(m.decor) as [DecorName, Baked][]) {
       if (name === 'pumpkin' || name === 'wheat' || name === 'corn') continue;
@@ -449,36 +454,125 @@ export class GameRenderer {
     for (const v of this.nodes.bush) v.mesh.visible = false;
     this.nodes.bush = this.crops;
     this.decorKey = '';
-    // Castle: KayKit keep on the code-built wooden platform with wheels.
+    // Castle: a walled medieval keep on the code-built timber deck with wheels (Kenney Castle Kit + Quaternius).
     this.castleCode.visible = false;
-    const deck = new THREE.Mesh(new THREE.BoxGeometry(6.6, 0.4, 4.7), new THREE.MeshLambertMaterial({ color: 0x7a5432 }));
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(6.6, 0.4, 4.7), new THREE.MeshLambertMaterial({ color: 0x5e4029 }));
     deck.position.y = DECK_Y - 0.2;
-    const trim = new THREE.Mesh(new THREE.BoxGeometry(6.8, 0.16, 4.9), new THREE.MeshLambertMaterial({ color: 0x4a2e1a }));
+    const trim = new THREE.Mesh(new THREE.BoxGeometry(6.8, 0.16, 4.9), new THREE.MeshLambertMaterial({ color: 0x3a2516 }));
     trim.position.y = DECK_Y - 0.42;
-    this.castle.add(trim);
-    const keep = new THREE.Mesh(m.props.castle.geo, m.props.castle.materials);
-    keep.position.y = DECK_Y;
-    this.castle.add(deck, keep);
-    deck.castShadow = keep.castShadow = true;
-    // Palisade along the deck edge: the castle wall.
-    for (let i = 0; i < 5; i++) {
-      const o = -2.6 + i * 1.3;
-      for (const [x, z, r] of [[o, -2.25, 0], [o, 2.25, 0], [-3.15, o * 0.65, Math.PI / 2], [3.15, o * 0.65, Math.PI / 2]]) {
-        if (Math.abs(o) < 0.7 && z === 2.25) continue; // gate gap facing the camera
-        const f = new THREE.Mesh(m.props.fence.geo, m.props.fence.materials);
-        f.position.set(x, DECK_Y, z);
-        f.rotation.y = r;
-        f.scale.set(1.15, 1.1, 1.15);
-        f.castShadow = true;
-        this.flags.add(f);
+    // Cobbled courtyard inside the walls.
+    const yard = new THREE.Mesh(new THREE.BoxGeometry(6.0, 0.04, 4.1), new THREE.MeshLambertMaterial({ color: 0x6f6658 }));
+    yard.position.y = DECK_Y + 0.02;
+    yard.receiveShadow = true;
+    this.castle.add(trim, deck, yard);
+    deck.castShadow = true;
+    this.buildWalls(m);
+    this.roomKey = '';
+  }
+
+  private medMesh(name: MedName, x: number, y: number, z: number, rot = 0, scale: number | [number, number, number] = 1): THREE.Mesh {
+    const b = this.models!.med[name];
+    const mesh = new THREE.Mesh(b.geo, b.materials);
+    mesh.position.set(x, y, z);
+    mesh.rotation.y = rot;
+    if (typeof scale === 'number') mesh.scale.setScalar(scale);
+    else mesh.scale.set(...scale);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    return mesh;
+  }
+
+  /** Stone curtain wall along the deck edge, round corner towers, a gatehouse gap facing the camera. */
+  private buildWalls(m: Models): void {
+    void m;
+    const S = 0.75; // wall scale: Kenney pieces are 1 unit wide and 1.31 tall
+    const ex = 3.3;
+    const ez = 2.35;
+    const g = this.flags;
+    const run = (from: number, to: number, place: (c: number, step: number) => void) => {
+      const len = to - from;
+      const count = Math.max(1, Math.round(len / S));
+      const step = len / count;
+      for (let i = 0; i < count; i++) place(from + step * (i + 0.5), step);
+    };
+    // North and south (along x), west and east (along z). Narrow pieces are thick toward local -x.
+    run(-ex + 0.5, ex - 0.5, (x, step) => {
+      g.add(this.medMesh('stoneNarrow', x, DECK_Y, -ez, Math.PI / 2, [S, S, step]));
+      if (Math.abs(x) > 0.6) g.add(this.medMesh('stoneNarrow', x, DECK_Y, ez, -Math.PI / 2, [S, S, step]));
+    });
+    run(-ez + 0.5, ez - 0.5, (z, step) => {
+      g.add(this.medMesh('stoneNarrow', -ex, DECK_Y, z, Math.PI, [S, S, step]));
+      g.add(this.medMesh('stoneNarrow', ex, DECK_Y, z, 0, [S, S, step]));
+    });
+    for (const [x, z] of [[-ex, -ez], [ex, -ez], [-ex, ez], [ex, ez]]) {
+      const cx = x * 0.97;
+      const cz = z * 0.96;
+      g.add(this.medMesh('hexTower', cx, DECK_Y, cz, 0, 0.95));
+      g.add(this.medMesh('hexRoof', cx, DECK_Y + 1.31 * 0.95, cz, 0, 0.95));
+    }
+    // Gate: portcullis between two banners, lanterns either side.
+    g.add(this.medMesh('portcullis', 0, DECK_Y, ez - 0.2, Math.PI / 2, 1.1));
+    for (const x of [-0.75, 0.75]) {
+      g.add(this.medMesh('bannerRed', x, DECK_Y, ez + 0.05, 0, 0.55));
+      g.add(this.medMesh('lantern', x * 1.5, DECK_Y, ez + 0.25, 0, 0.6));
+    }
+  }
+
+  /** Keep and room buildings follow the castle tier and the rooms built; rebuilt only when those change. */
+  private updateRooms(s: GameState): void {
+    if (!this.models) return;
+    const open = slotCount(s);
+    const key = `${s.castle.tier}|${open}|${s.rooms.map((r) => r?.type ?? '-').join(',')}`;
+    if (key === this.roomKey) return;
+    this.roomKey = key;
+    if (this.roomGroup) this.castle.remove(this.roomGroup);
+    const g = (this.roomGroup = new THREE.Group());
+    this.castle.add(g);
+    const t2 = s.castle.tier >= 2;
+    // Keep: stacked tower sections; tier 2 adds a storey, a high roof and pennants.
+    const K = 1.35;
+    const kz = -0.15;
+    const storeys: MedName[] = t2 ? ['towerBase', 'towerDoor', 'towerMid'] : ['towerBase', 'towerDoor'];
+    let y = DECK_Y;
+    for (const p of storeys) {
+      g.add(this.medMesh(p, 0, y, kz, 0, K));
+      y += 1.0 * K;
+    }
+    g.add(this.medMesh(t2 ? 'towerRoof' : 'towerTop', 0, y, kz, 0, K));
+    this.keepTop = y + (t2 ? 2.0 : 1.35) * K;
+    if (t2) for (const x of [-0.72, 0.72]) g.add(this.medMesh('pennant', x * K, y, kz + 0.72 * K, 0, 0.8));
+    // Rooms: one small building per built room, in the slot grid around the keep (4 columns x 3 rows).
+    const colX = [-2.35, -1.2, 1.2, 2.35];
+    const rowZ = [-1.3, 0.05, 1.35];
+    const pick: Record<RoomType, [MedName, MedName]> = {
+      house: ['house', 'house2'],
+      barracks: ['barracks', 'barracks2'],
+      range: ['range', 'range2'],
+      workshop: ['hut', 'hut'],
+      watchtower: ['watch', 'watch2'],
+      storage: ['storage', 'storage2'],
+      kitchen: ['market', 'market2'],
+    };
+    for (let i = 0; i < open; i++) {
+      const [col, row] = SLOT_POS[i];
+      const x = colX[col];
+      const z = rowZ[row];
+      const r = s.rooms[i];
+      if (!r) {
+        // Empty plot: a few crates and a barrel.
+        g.add(this.medMesh('crates', x - 0.15, DECK_Y, z, i, 0.45));
+        g.add(this.medMesh('barrel', x + 0.3, DECK_Y, z + 0.2, 0, 0.6));
+        continue;
       }
+      const name = pick[r.type][t2 ? 1 : 0];
+      const b = this.models.med[name];
+      b.geo.computeBoundingBox();
+      const bb = b.geo.boundingBox!;
+      const w = Math.max(bb.max.x - bb.min.x, bb.max.z - bb.min.z);
+      const size = r.type === 'watchtower' ? 0.9 : 1.2;
+      // Face the courtyard: rooms north of the keep look south, the rest face the camera.
+      g.add(this.medMesh(name, x, DECK_Y, z, row === 0 ? 0 : Math.PI, size / w));
     }
-    for (const [x, z] of [[-3.1, -2.2], [3.1, -2.2], [-3.1, 2.2], [3.1, 2.2]]) {
-      const f = new THREE.Mesh(m.props.flag.geo, m.props.flag.materials);
-      f.position.set(x, DECK_Y, z);
-      this.flags.add(f);
-    }
-    this.core.position.y = DECK_Y + 8;
   }
 
   /** Shadows cost the most on weak GPUs; main turns them off when frames stay slow. */
@@ -601,18 +695,18 @@ export class GameRenderer {
     const n = this.nightMix;
 
     // Sky and lights.
-    const day = new THREE.Color(0x9cc8e8);
-    const dusk = new THREE.Color(0xe89a6a);
+    const day = new THREE.Color(0xaabfc6);
+    const dusk = new THREE.Color(0xd08a5a);
     const dark = new THREE.Color(0x0d1a33);
     const sky = n < 0.5 ? day.clone().lerp(dusk, n * 2) : dusk.clone().lerp(dark, (n - 0.5) * 2);
     (this.scene.background as THREE.Color).copy(sky);
     (this.scene.fog as THREE.Fog).color.copy(sky);
     // Night is moonlit blue, not black: the lit areas stay warm, the rest reads as cold and dangerous.
     this.hemi.intensity = 1.6 * (1 - n) + 0.32 * n;
-    this.hemi.color.setHex(n > 0.5 ? 0x5a70b0 : 0xdfefff);
-    this.hemi.groundColor.setHex(n > 0.5 ? 0x1a1a28 : 0x6a5a40);
-    this.sun.intensity = 1.8 * (1 - n) + 0.5 * n;
-    this.sun.color.setHex(n > 0.5 ? 0x7c92ff : n > 0.2 ? 0xffb078 : 0xfff2d8);
+    this.hemi.color.setHex(n > 0.5 ? 0x5a70b0 : 0xf0e6d4);
+    this.hemi.groundColor.setHex(n > 0.5 ? 0x1a1a28 : 0x5e4c34);
+    this.sun.intensity = 1.9 * (1 - n) + 0.5 * n;
+    this.sun.color.setHex(n > 0.5 ? 0x7c92ff : n > 0.2 ? 0xffa868 : 0xffe4bc);
 
     // Camera.
     this.camSmooth.lerp(this.camTarget, Math.min(1, dt * 10));
@@ -627,6 +721,7 @@ export class GameRenderer {
 
     // Castle.
     const c = s.castle;
+    this.updateRooms(s);
     this.castle.position.set(c.x, 0, c.z);
     this.wheelRoll += c.moving ? dt * 3.2 : 0;
     const roll = this.wheelRoll;
@@ -665,14 +760,11 @@ export class GameRenderer {
       for (let i = 0; i < 3; i++) {
         const fx = c.x + (Math.random() - 0.5) * 2.4;
         const fz = c.z + (Math.random() - 0.5) * 2.4;
-        this.particles.push({ x: fx, y: DECK_Y + 4.5, z: fz, vx: 0, vy: 2 + Math.random() * 1.5, vz: 0, age: 0, life: 0.6, size: 0.6, grow: -0.6, color: Math.random() < 0.5 ? 0xff7a20 : 0xffc040 });
+        this.particles.push({ x: fx, y: this.keepTop - 1.2, z: fz, vx: 0, vy: 2 + Math.random() * 1.5, vz: 0, age: 0, life: 0.6, size: 0.6, grow: -0.6, color: Math.random() < 0.5 ? 0xff7a20 : 0xffc040 });
       }
-      if (Math.random() < 0.3) this.particles.push({ x: c.x, y: DECK_Y + 6, z: c.z, vx: 0.2, vy: 1.2, vz: 0, age: 0, life: 2.5, size: 0.6, grow: 0.8, color: 0x2a2a2e });
+      if (Math.random() < 0.3) this.particles.push({ x: c.x, y: this.keepTop, z: c.z, vx: 0.2, vy: 1.2, vz: 0, age: 0, life: 2.5, size: 0.6, grow: 0.8, color: 0x2a2a2e });
     }
     for (const l of this.lanterns) (l.material as THREE.MeshBasicMaterial).color.setHex(n > 0.3 ? 0xffe0a0 : 0xb08a3a);
-    this.core.rotation.y = this.time;
-    const coreRatio = c.coreHp / c.coreMax;
-    (this.core.material as THREE.MeshBasicMaterial).color.setHex(coreRatio > 0.5 ? 0x60e0ff : coreRatio > 0.3 ? 0xffc040 : 0xff3030);
     this.fire.visible = c.fire > 0;
     if (this.fire.visible) this.fire.scale.set(1, 0.8 + Math.sin(this.time * 18) * 0.2, 1);
 
@@ -829,6 +921,7 @@ export class GameRenderer {
     for (const c of this.cliffs) c.begin();
     for (const v of this.scenery) v.begin();
     for (const v of this.groves) v.begin();
+    for (const v of this.landmarks.values()) v.begin();
     for (let i = 0; i < 7; i++) {
       const chunk = first + i;
       const terrain = chunkTerrain(seed, chunk);
@@ -850,6 +943,7 @@ export class GameRenderer {
     for (const c of this.cliffs) c.end();
     for (const v of this.scenery) v.end();
     for (const v of this.groves) v.end();
+    for (const v of this.landmarks.values()) v.end();
     this.placeDecor(seed, first);
   }
 
@@ -1071,6 +1165,41 @@ export class GameRenderer {
         const sc = 0.8 + h(3) * 0.5;
         v.add(x0 + h(4) * L, 0, side * (30 + h(1) * 8), h(5) * Math.PI * 2, sc, sc, sc, 0xffffff);
       }
+    }
+    if (this.landmarks.size) this.placeLandmarks(seed, chunk, terrain);
+  }
+
+  /** Medieval countryside beside the line: mills and fields, mines in the woods, wrecks of old sieges. */
+  private placeLandmarks(seed: number, chunk: number, terrain: 'plains' | 'forest' | 'canyon'): void {
+    if (terrain === 'canyon') return;
+    const L = BALANCE.world.chunkLength;
+    const x0 = chunkCenter(chunk) - L / 2;
+    const h = (salt: number) => hash01(seed, chunk, 7, salt + 60);
+    const put = (name: MedName, x: number, z: number, rot: number, sc = 1) =>
+      this.landmarks.get(name)!.add(x, terrainHeight(seed, x, z) - 0.05, z, rot, sc, sc, sc, 0xffffff);
+    // North (far side, top of the screen): the tall landmark of the chunk.
+    const nx = x0 + 8 + h(1) * (L - 16);
+    const nz = -(31 + h(2) * 6);
+    if (terrain === 'plains') {
+      put(h(3) < 0.5 ? 'windmill' : 'mill', nx, nz, h(4) * 0.6 - 0.3);
+      put('farm', nx + 7, nz + 1.5, 0, 0.9);
+      put('cart', nx - 4, nz + 3, h(5) * 6);
+    } else {
+      put(h(3) < 0.5 ? 'mine' : 'towerHouse', nx, nz, h(4) * 0.6 - 0.3);
+      put('pines', nx + 6, nz - 1, h(5) * 6);
+      put('logs', nx - 3.5, nz + 3, h(6) * 6, 1.2);
+    }
+    // South (near the camera): only low things, so they never hide the camp.
+    if (terrain === 'plains' && h(7) < 0.6) put('farm', x0 + h(8) * L, 30 + h(9) * 5, 0, 0.8);
+    // An old battlefield: a wrecked siege engine with debris, on either side, now and then.
+    if (h(10) < 0.55) {
+      const side = h(11) < 0.5 ? -1 : 1;
+      const wx = x0 + h(12) * L;
+      const wz = side * (17 + h(13) * 9);
+      const wreck: MedName[] = ['ruinTrebuchet', 'ruinRam', 'ruinTower'];
+      put(wreck[Math.floor(h(14) * wreck.length)], wx, wz, h(15) * 6, side < 0 ? 1 : 0.8);
+      put('wheel', wx + 2.2, wz + 1, h(16) * 6);
+      put('fenceBroken', wx - 2.4, wz - 0.5, h(17) * 6);
     }
   }
 

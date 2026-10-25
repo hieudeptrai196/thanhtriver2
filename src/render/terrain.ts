@@ -63,15 +63,15 @@ export function terrainHeight(seed: number, x: number, z: number): number {
 }
 
 const C = {
-  grassA: new THREE.Color(0x6fae4c),
-  grassB: new THREE.Color(0x8cc05a),
-  forestA: new THREE.Color(0x4f8a3e),
-  forestB: new THREE.Color(0x67a04a),
-  dirt: new THREE.Color(0xa88a5c),
-  sand: new THREE.Color(0xc9a77c),
-  sandDark: new THREE.Color(0xa98563),
-  rock: new THREE.Color(0x8a7a6c),
-  hilltop: new THREE.Color(0xa7c46a),
+  grassA: new THREE.Color(0x6a8c44),
+  grassB: new THREE.Color(0x82994f),
+  forestA: new THREE.Color(0x4a6b35),
+  forestB: new THREE.Color(0x5c7c3f),
+  dirt: new THREE.Color(0x8f7350),
+  sand: new THREE.Color(0xb09470),
+  sandDark: new THREE.Color(0x8f7556),
+  rock: new THREE.Color(0x7a6f62),
+  hilltop: new THREE.Color(0x8fa058),
 };
 
 function colorAt(seed: number, terrain: TerrainType, cw: number, x: number, z: number, h: number, out: THREE.Color): void {

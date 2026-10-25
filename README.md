@@ -3,7 +3,7 @@
 Game RTS sinh tồn chống quái trên trình duyệt. Bạn chỉ huy một ngôi làng sống quanh một tòa thành chạy trên đường ray:
 ban ngày khai thác, xây và lên đường, ban đêm cố thủ. Mỗi sáng phải chọn giữ những gì đã xây hay đánh đổi để đi tiếp.
 
-Viết bằng Vite, TypeScript (strict) và Three.js. Mô hình 3D dùng KayKit và Kenney Nature Kit (đều CC0, xem
+Viết bằng Vite, TypeScript (strict) và Three.js. Mô hình 3D dùng KayKit, Kenney (Nature, Castle, Fantasy Town Kit) và Quaternius Ultimate Fantasy RTS (đều CC0, xem
 [CREDITS.md](CREDITS.md)); địa hình, đường ray, hiệu ứng và âm thanh dựng bằng code; không có server, chơi được offline
 sau lần mở đầu.
 
@@ -68,13 +68,18 @@ lên sàn thành. Lệnh tay đè lên việc tự động cho tới khi bấm *
 - Ban đêm có ánh trăng xanh; vùng sáng ấm, đuốc bập bùng có tia lửa; cháy mái là lửa và khói thật.
 - Phản hồi giao tranh: tên bay theo đường cong, mưa tên rơi xuống, trúng đòn thì chớp sáng, quân và quái ngã xuống
   rồi chìm vào đất.
-- **KayKit** của Kay Lousberg (CC0): nhân vật, xương khô, tòa thành, tháp, tường gỗ, cây, đá, đồi núi.
-- **Nature Kit** của Kenney (CC0): cỏ, hoa, nấm, sỏi, khúc gỗ, ruộng bí ngô / lúa mì / ngô.
+- Phong cách trung cổ: tông màu đất, gỗ sẫm, đá xám, mái đỏ gỉ; giao diện gỗ – da – viền đồng, tiêu đề chữ Alegreya SC.
+- Lâu đài trên tàu có tường đá, cổng, 4 tháp góc và tháp chính (cao thêm một tầng ở tier 2); mỗi phòng hiện thành một
+  ngôi nhà nhỏ trên sàn (gỗ ở tier 1, đá ở tier 2). Ngoài đồng có cối xay gió, ruộng lúa, mỏ đá, xác máy công thành.
+- **KayKit** của Kay Lousberg (CC0): nhân vật, xương khô, tường gỗ, cây, đá, đồi núi.
+- **Kenney** (CC0): Nature Kit (cỏ, hoa, nấm, sỏi, ruộng), Castle Kit (tường, tháp, tháp chính, xác máy công thành),
+  Fantasy Town Kit (cối xay, xe kéo, đèn lồng, cờ).
+- **Quaternius** Ultimate Fantasy RTS (CC0): nhà ở, trại lính, trường bắn, kho, chợ, tháp canh, mỏ, ruộng lúa.
 - Địa hình liền mạch low-poly và đường ray dựng bằng code; bóng đổ mặt trời tự tắt khi máy yếu.
 - Chi tiết từng file trong [CREDITS.md](CREDITS.md); trong game xem ở menu **Ghi công**.
-- `public/models/*.glb` là bản đã cắt gọn (khoảng 3,7MB). Dựng lại từ file gốc:
-  `node scripts/build-models.mjs <thư mục KayKit | -> [<thư mục "Models/GLTF format" của Kenney>]`
-  (model Medieval để trong thư mục con `med/` của thư mục KayKit).
+- `public/models/*.glb` là bản đã cắt gọn (khoảng 6MB). Dựng lại từ file gốc (thư mục nào để `-` thì giữ file cũ):
+  `node scripts/build-models.mjs <KayKit | -> [<Nature Kit "Models/GLTF format" | ->] [<Castle Kit "Models/GLB format" | ->] [<Fantasy Town Kit "Models/GLB format" | ->] [<thư mục glTF của Ultimate Fantasy RTS | ->]`
+  (model Medieval của KayKit để trong thư mục con `med/` của thư mục KayKit).
 
 ## Kiến trúc
 
@@ -88,7 +93,7 @@ src/
     difficulty.ts   số quái, số hướng, độ dài pha theo 3 giai đoạn
     rng.ts          RNG có seed, trạng thái nằm trong GameState
     bot.ts          3 bot policy (Bám trụ, Du mục, Chiến thuật); dùng cho npm run sim, test và AI chơi thay
-  render/           Three.js, chỉ đọc state; terrain.ts, models.ts (KayKit + Kenney), InstancedMesh, bóng đổ
+  render/           Three.js, chỉ đọc state; terrain.ts, models.ts (KayKit + Kenney + Quaternius), InstancedMesh, bóng đổ
   ui/               HUD bằng DOM và CSS; localStorage (lưu, điểm cao)
   input/            chuột/bàn phím/cảm ứng → Command
   i18n/             en.ts định nghĩa khóa; vi.ts là Record<MessageKey, string>

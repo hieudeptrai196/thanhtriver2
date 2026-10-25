@@ -13,7 +13,7 @@ license; we give it gladly. The same credits are shown in the game under **Menu 
 | --- | --- | --- | --- |
 | KayKit : Adventurers Character Pack (1.0) | [GitHub](https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0) | `Rogue_Hooded.glb`, `Barbarian.glb`, `Knight.glb`, `Rogue.glb` | Peasant, builder, spearman and shieldbearer (the knight, tinted and a size up), archer |
 | KayKit Character Pack : Skeletons (1.0) | [GitHub](https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Skeletons-1.0) | `Skeleton_Minion.glb`, `Skeleton_Warrior.glb`, `Skeleton_Mage.glb` | Fast monster, brute and boss, ranged monster |
-| KayKit : Medieval Hexagon Pack (1.0) | [GitHub](https://github.com/KayKit-Game-Assets/KayKit-Medieval-Hexagon-Pack-1.0) | `building_castle_blue`, `building_tower_A_blue`, `fence_wood_straight`, `tree_single_A`, `tree_single_B`, `tree_single_A_cut`, `rock_single_A/B/C`, `mountain_A`, `flag_blue`, `hills_A_trees`, `hills_B_trees`, `mountain_A_grass_trees`, `trees_A_large`, `trees_B_large` (+ `hexagons_medieval.png`) | Castle keep, arrow tower, wooden wall and castle palisade, trees, stumps, rocks, canyon boulders, flags, hills and groves beside the railway |
+| KayKit : Medieval Hexagon Pack (1.0) | [GitHub](https://github.com/KayKit-Game-Assets/KayKit-Medieval-Hexagon-Pack-1.0) | `fence_wood_straight`, `tree_single_A`, `tree_single_B`, `tree_single_A_cut`, `rock_single_A/B/C`, `mountain_A`, `hills_A_trees`, `hills_B_trees`, `mountain_A_grass_trees`, `trees_A_large`, `trees_B_large` (+ `hexagons_medieval.png`) | Wooden wall, trees, stumps, rocks, canyon boulders, hills and groves beside the railway |
 
 ## Kenney Nature Kit by Kenney
 
@@ -26,14 +26,41 @@ Kenney!
 | `grass`, `grass_large`, `grass_leafs`, `flower_redA`, `flower_yellowA`, `flower_purpleA`, `mushroom_redGroup`, `mushroom_tanGroup`, `plant_bushSmall`, `rock_smallA`, `rock_smallFlatA`, `log`, `stump_old`, `campfire_logs` | Ground decoration (grass, flowers, mushrooms, pebbles, logs) |
 | `crop_pumpkin`, `crops_wheatStageB`, `crops_cornStageD` | Food fields (the food resource nodes) |
 
+## Kenney Castle Kit and Fantasy Town Kit by Kenney
+
+**Castle Kit (2.0)** and **Fantasy Town Kit (2.0)** by **Kenney** — [kenney.nl/assets/castle-kit](https://kenney.nl/assets/castle-kit),
+[kenney.nl/assets/fantasy-town-kit](https://kenney.nl/assets/fantasy-town-kit). CC0.
+
+| Kit | Files used | Used in game as |
+| --- | --- | --- |
+| Castle Kit | `wall-narrow`, `gate`, `tower-square-base`, `tower-square-mid-door`, `tower-square-mid-windows`, `tower-square-top-roof-high`, `tower-square-roof`, `tower-hexagon-base`, `tower-hexagon-roof`, `flag-pennant`, `siege-trebuchet-demolished`, `siege-ram-demolished`, `siege-tower-demolished` | The castle's stone curtain wall, gate and corner towers; the keep (one storey and a high roof more at tier 2); wrecks of old sieges in the countryside |
+| Fantasy Town Kit | `windmill`, `cart`, `lantern`, `banner-red`, `fence-broken`, `wheel` | Gate banners and lanterns, windmills, carts and battlefield debris |
+
+## Ultimate Fantasy RTS by Quaternius
+
+**Ultimate Fantasy RTS** by **Quaternius** — [quaternius.com/packs/ultimatefantasyrts.html](https://quaternius.com/packs/ultimatefantasyrts.html),
+[Patreon](https://www.patreon.com/quaternius). CC0. Thank you, Quaternius!
+
+| Files used | Used in game as |
+| --- | --- |
+| `Houses_FirstAge_1_Level3`, `Houses_SecondAge_1_Level1`, `Houses_FirstAge_2_Level3`, `Barracks_FirstAge_Level3`, `Barracks_SecondAge_Level1`, `Archery_FirstAge_Level3`, `Archery_SecondAge_Level1`, `Storage_FirstAge_Leve3`, `Storage_SecondAge_Level1`, `Market_FirstAge_Level3`, `Market_SecondAge_Level1`, `WatchTower_FirstAge_Level3`, `WatchTower_SecondAge_Level1` | The rooms on the castle deck (house, workshop, barracks, archery range, storage, kitchen, watchtower) — timber at tier 1, stone at tier 2 — and the arrow towers you build |
+| `Barrel`, `Crate_Stack1`, `Logs`, `Windmill_FirstAge`, `Farm_FirstAge_Level1_Wheat`, `Mine`, `TowerHouse_FirstAge`, `Resource_PineTree_Group` | Empty plots on the deck, and mills, wheat fields, mines and woodcutters' towers beside the railway |
+
+## Font
+
+**Alegreya SC** by Juan Pablo del Peral (Huerta Tipográfica), [SIL Open Font License 1.1](https://openfontlicense.org), bundled
+from the [`@fontsource/alegreya-sc`](https://fontsource.org/fonts/alegreya-sc) package. Used for titles.
+
 ## Changes made for this game
 
 `scripts/build-models.mjs` removes unused weapons and animations and repacks the files as `.glb`
-(`public/models/*.glb`; Kenney files are prefixed `k_`). Kenney material colours are retuned to the game's palette
-in `src/render/models.ts`. At runtime a few frames of the Idle, Walk/Run and attack animations are baked into static
+(`public/models/*.glb`; Kenney Nature Kit files are prefixed `k_`, the medieval buildings and props `m_`, and those are
+also quantized to make them smaller). Colours are retuned to the game's earthy medieval palette in `src/render/models.ts`:
+Kenney's colour atlas is shifted at load time (blue roofs to rust red, pale sand to grey stone) and Quaternius materials
+are recoloured by name. At runtime a few frames of the Idle, Walk/Run and attack animations are baked into static
 meshes so crowds can be drawn with instancing. To rebuild from the original downloads, see `README.md`.
 
 ## Everything else
 
-The ground terrain, railway, torches, the castle's wooden deck and wheels, effects, UI and sounds are made in code for
-this project. Built with [three.js](https://threejs.org) (MIT) and [Vite](https://vite.dev) (MIT).
+The ground terrain, railway, torches, the castle's timber deck, chimneys and wheels, effects, UI and sounds are made in
+code for this project. Built with [three.js](https://threejs.org) (MIT) and [Vite](https://vite.dev) (MIT).

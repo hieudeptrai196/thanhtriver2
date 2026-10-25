@@ -15,9 +15,10 @@ export const en = {
   'menu.rotate': 'Please rotate your device to landscape',
   'menu.credits': 'Credits',
   'credits.models': '3D models: KayKit by Kay Lousberg (www.kaylousberg.com), CC0 – Adventurers Character Pack, Skeletons Character Pack, Medieval Hexagon Pack.',
-  'credits.kenney': 'Ground decoration and crop fields: Nature Kit by Kenney (www.kenney.nl), CC0.',
-  'credits.code': 'Terrain, railway, torches, effects, interface and sounds made for this game. Built with three.js and Vite.',
-  'credits.thanks': 'Thank you, Kay and Kenney!',
+  'credits.kenney': 'Castle walls, towers, banners, mills and siege wrecks: Castle Kit, Fantasy Town Kit and Nature Kit by Kenney (www.kenney.nl), CC0.',
+  'credits.quaternius': 'Houses, barracks, watchtowers, storehouses, markets and countryside: Ultimate Fantasy RTS by Quaternius (quaternius.com), CC0.',
+  'credits.code': 'Terrain, railway, the castle deck and wheels, torches, effects, interface and sounds made for this game. Title font: Alegreya SC (SIL Open Font License). Built with three.js and Vite.',
+  'credits.thanks': 'Thank you, Kay, Kenney and Quaternius!',
   'menu.seed': 'Seed {seed}',
 
   'help.1': 'You command a village living around one walking castle. You have no hero: give orders to groups.',

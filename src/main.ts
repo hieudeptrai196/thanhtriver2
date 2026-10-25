@@ -1,3 +1,4 @@
+import '@fontsource/alegreya-sc/700.css';
 import './style.css';
 import { Audio } from './audio/audio';
 import { getLang, initLang, setLang, t, type MessageKey } from './i18n';
@@ -252,7 +253,7 @@ function showMenu(view: 'main' | 'scores' | 'help' | 'credits' | 'mode' = 'main'
     box.append(list);
   } else {
     const list = el('div', 'help');
-    list.append(el('p', '', t('credits.models')), el('p', '', t('credits.kenney')), el('p', '', t('credits.code')), el('p', '', t('credits.thanks')));
+    list.append(el('p', '', t('credits.models')), el('p', '', t('credits.kenney')), el('p', '', t('credits.quaternius')), el('p', '', t('credits.code')), el('p', '', t('credits.thanks')));
     box.append(list);
   }
   if (view !== 'main') {

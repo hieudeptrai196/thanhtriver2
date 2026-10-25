@@ -184,9 +184,13 @@ Hẻm núi (ít tài nguyên, chỉ 2 hướng vào). Càng xa càng giàu và c
 
 ## 7. Đồ hoạ
 
-Tòa thành là "đoàn tàu pháo đài" (bánh tàu, thanh truyền, ống khói nhả khói khi chạy). Đêm có ánh trăng xanh, vùng
-sáng ấm, đuốc bập bùng; giao tranh có tên bay, chớp sáng khi trúng đòn, xác ngã. Giao diện cố tình ít chữ: biểu
-tượng và số, giải thích nằm trong tooltip. KayKit (Kay Lousberg) cho nhân vật, quái, thành, tháp, cây, đá, đồi núi; Kenney Nature Kit cho cỏ, hoa, nấm, ruộng;
+Tòa thành là "pháo đài trên đường ray": sàn gỗ có bánh tàu, tường đá, cổng, 4 tháp góc, tháp chính (tier 2 cao thêm
+một tầng) và mỗi phòng là một ngôi nhà nhỏ trên sàn (gỗ ở tier 1, đá ở tier 2); ống khói đá nhả khói khi chạy. Tông
+màu trung cổ: cỏ ô-liu, đất nâu, gỗ sẫm, đá xám, mái đỏ gỉ; giao diện gỗ – da – viền đồng. Ngoài đồng có cối xay gió,
+ruộng lúa, mỏ đá, xác máy công thành. Đêm có ánh trăng xanh, vùng sáng ấm, đuốc bập bùng; giao tranh có tên bay, chớp
+sáng khi trúng đòn, xác ngã. Giao diện cố tình ít chữ: biểu tượng và số, giải thích nằm trong tooltip. KayKit (Kay
+Lousberg) cho nhân vật, quái, cây, đá, đồi núi; Kenney (Nature, Castle, Fantasy Town Kit) cho cỏ, hoa, ruộng, tường
+thành, tháp, cối xay; Quaternius Ultimate Fantasy RTS cho nhà các phòng, tháp canh, mỏ, ruộng lúa;
 địa hình low-poly liền mạch, đường ray, đuốc dựng bằng code; bóng đổ mặt trời tự tắt khi máy yếu. Hoạt ảnh được
 "nướng" thành vài khung hình tĩnh để vẽ hàng loạt. Ghi công đầy đủ: [CREDITS.md](../CREDITS.md).
 
