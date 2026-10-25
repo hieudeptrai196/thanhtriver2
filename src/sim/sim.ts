@@ -1681,7 +1681,8 @@ export class Sim {
       return;
     }
     const st = s.structs.find((x) => x.id === t)!;
-    if (!this.walkTo(u, st.cx + 0.5, st.cz + 0.5, 1.1, BALANCE.structs[st.type].blocks)) {
+    // A blocking structure fills its cell: work from beside it (measured to the structure, not the castle).
+    if (!this.walkTo(u, st.cx + 0.5, st.cz + 0.5, BALANCE.structs[st.type].blocks ? 1.3 : 1.1)) {
       u.job = st.built < 1 ? 'build' : 'repair';
       return;
     }

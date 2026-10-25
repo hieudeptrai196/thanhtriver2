@@ -66,3 +66,17 @@ describe('outside buildings', () => {
     expect(s.units.some((u) => u.type === 'archer')).toBe(true);
   });
 });
+
+describe('builders', () => {
+  it('walk out and build a tower far from the castle', () => {
+    const sim = Sim.create(32);
+    const s = sim.state;
+    s.res.wood = 500;
+    s.res.stone = 500;
+    sim.apply([{ t: 'build', type: 'tower', pos: { x: -11.5, z: 9.5 } }]);
+    const tower = s.structs.find((x) => x.type === 'tower')!;
+    runUntil(sim, () => tower.built >= 1, 60 * 60);
+    const builder = s.units.find((u) => u.type === 'builder')!;
+    expect(Math.hypot(builder.x - (tower.cx + 0.5), builder.z - (tower.cz + 0.5))).toBeLessThan(3);
+  });
+});

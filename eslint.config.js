@@ -20,6 +20,17 @@ export default tseslint.config(
     languageOptions: { globals: { Buffer: 'readonly', console: 'readonly', process: 'readonly' } },
   },
   {
+    // Trailer director: runs inside the game page.
+    files: ['tools/trailer/director.js'],
+    languageOptions: {
+      globals: { window: 'readonly', document: 'readonly', location: 'readonly', fetch: 'readonly', setInterval: 'readonly', clearInterval: 'readonly' },
+    },
+  },
+  {
+    files: ['tools/**/*.mjs'],
+    languageOptions: { globals: { Buffer: 'readonly', console: 'readonly', process: 'readonly', URL: 'readonly' } },
+  },
+  {
     files: ['src/sim/**/*.ts', 'src/data/**/*.ts'],
     rules: {
       'no-restricted-imports': ['error', { patterns: ['three', 'three/*', '../render/*', '../ui/*', '../input/*'] }],
