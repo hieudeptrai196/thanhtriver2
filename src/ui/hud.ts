@@ -99,6 +99,8 @@ export class Hud {
   private arrows = el('div', 'arrows');
   private pauseBanner = el('div', 'pause-banner');
   private fps = el('div', 'fps');
+  private planEl = el('div', 'plan-banner');
+  private planSig = '';
   private rooms: HTMLElement;
   private build: HTMLElement;
   private eco: HTMLElement;
@@ -232,7 +234,7 @@ export class Hud {
     this.dawn = el('div', 'modal dawn hidden');
     this.over = el('div', 'modal over hidden');
     this.pauseBanner.textContent = t('hud.paused');
-    this.root.append(top, this.box, this.pickBar, this.squadBar, this.orderBar, this.arrows, this.hint, this.toasts, this.pauseBanner, bottom, this.rooms, this.build, this.eco, this.dawn, this.over, this.fps);
+    this.root.append(top, this.planEl, this.box, this.pickBar, this.squadBar, this.orderBar, this.arrows, this.hint, this.toasts, this.pauseBanner, bottom, this.rooms, this.build, this.eco, this.dawn, this.over, this.fps);
   }
 
   private sim!: Sim;
@@ -411,6 +413,7 @@ export class Hud {
     this.hint.classList.toggle('show', hint !== '');
 
     this.updateArrows(sim, renderer, w, h);
+    this.updatePlan(sim);
     if (!this.rooms.classList.contains('hidden')) this.renderRooms(sim);
     if (!this.build.classList.contains('hidden')) this.renderBuild(sim);
     if (!this.eco.classList.contains('hidden')) this.renderEco(sim);
@@ -419,6 +422,26 @@ export class Hud {
 
     this.fps.classList.toggle('show', this.showFps);
     if (this.showFps) this.fps.textContent = t('hud.fps', { fps: Math.round(fps) });
+  }
+
+  /** Dusk/night banner: tonight's problems and how sure the forecast is (GDD v1.2 §10.2). */
+  private updatePlan(sim: Sim): void {
+    const s = sim.state;
+    const plan = s.plan;
+    const show = !!plan && (s.phase === 'dusk' || s.phase === 'night') && !!plan.patterns;
+    const sig = show ? `${s.night}:${plan!.patterns.join()}:${plan!.confirmed}:${plan!.harassDir}` : '';
+    this.planEl.classList.toggle('show', show);
+    if (sig === this.planSig) return;
+    this.planSig = sig;
+    this.planEl.replaceChildren();
+    if (!show) return;
+    const names = plan!.patterns.map((p) => t(`pattern.${p}` as MessageKey)).join(' + ');
+    const est = plan!.confirmed ? t('plan.confirmed') : t('plan.estimated', { lo: Math.round(plan!.total * 0.8), hi: Math.round(plan!.total * 1.2) });
+    this.planEl.append(el('b', '', t('plan.title', { names })), el('small', '', est));
+    for (const p of plan!.patterns) {
+      const hint = t(`pattern.hint.${p}` as MessageKey, { dir: plan!.harassDir ?? plan!.dirs[0] });
+      this.planEl.append(el('div', '', `• ${hint}`));
+    }
   }
 
   private updateArrows(sim: Sim, renderer: GameRenderer, w: number, h: number): void {
@@ -440,8 +463,9 @@ export class Hud {
       const margin = 56;
       const x = Math.max(margin, Math.min(w - margin, p.x));
       const y = Math.max(margin + 40, Math.min(h - 150, p.y));
-      const many = plan.weights[i] >= 1 / plan.dirs.length;
-      const label = `${t(`dir.${d}` as MessageKey)} · ${many ? t('hud.many') : t('hud.few')}`;
+      const threat = plan.threat?.[i] ?? 'mid';
+      const many = threat === 'high';
+      const label = `${t(`dir.${d}` as MessageKey)} · ${t(`threat.${threat}` as MessageKey)}`;
       a.style.transform = `translate(${x}px, ${y}px)`;
       a.innerHTML = '';
       const ic = el('div', 'arrow-icon', '➤');
@@ -652,6 +676,7 @@ export class Hud {
     );
     box.append(sum);
     if (st.hungry) box.append(el('div', 'warn', t('dawn.hungry')));
+    box.append(this.recap(s));
     if (!s.cardPicked) {
       box.append(el('h3', '', t('dawn.pickCard')));
       const row = el('div', 'cards');
@@ -684,6 +709,32 @@ export class Hud {
     }
     box.append(el('div', 'saved', `💾 ${t('dawn.saved')}`));
     this.dawn.append(box);
+  }
+
+  /** Three-line recap built from what really happened (GDD v1.2 §17.5). */
+  private recap(s: Sim['state']): HTMLElement {
+    const st = s.nightStats;
+    const c = s.castle;
+    const box = el('div', 'recap');
+    const lostList = Object.entries(st.lostByType)
+      .filter(([, n]) => n > 0)
+      .map(([type, n]) => `${n} ${t(`unit.one.${type}` as MessageKey)}`)
+      .join(', ');
+    box.append(el('div', '', `${t('recap.losses')}: ${t('recap.lossLine', { units: lostList || t('recap.noneLost'), structs: st.structLost, wall: Math.round(st.wallDamage), core: Math.round(st.coreDamage) })}`));
+    let cause = t('recap.noBreak');
+    if (st.cause.startsWith('breach:')) cause = t('recap.breach', { dir: t(`dir.${st.cause.slice(7)}` as MessageKey) });
+    else if (st.cause === 'fire') cause = t('recap.fire');
+    else if (st.cause === 'workersCaught') cause = t('recap.workers');
+    box.append(el('div', '', `${t('recap.break')}: ${cause}`));
+    const todo: string[] = [];
+    const need = s.units.length * BALANCE.foodPerUnit;
+    if (s.res.food < need) todo.push(t('recap.food', { n: need - Math.floor(s.res.food) }));
+    const woodForWall = Math.ceil((c.wallMax - c.wallHp) * BALANCE.repairWoodPerHp);
+    if (woodForWall > s.res.wood) todo.push(t('recap.wood', { n: woodForWall - Math.floor(s.res.wood) }));
+    if (c.wheelHp <= 0) todo.push(t('recap.wheel'));
+    if (s.routes[0]?.exhausted) todo.push(t('recap.dry'));
+    box.append(el('div', todo.length ? 'bad' : 'good', `${t('recap.next')}: ${todo.length ? todo.join(' · ') : t('recap.ok')}`));
+    return box;
   }
 
   private renderOver(sim: Sim): void {

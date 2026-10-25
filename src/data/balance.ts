@@ -63,6 +63,15 @@ export const BALANCE = {
     newRegionMaxDirs: 2,
     rangedFrom: 3,
     bossEvery: 5,
+    // Night pressure patterns (GDD v1.2 §2.2): first night from which each can be drawn.
+    patternFrom: { breach: 1, harass: 1, split: 2, ranged: 3, siege: 4 } as Record<'breach' | 'harass' | 'split' | 'ranged' | 'siege', number>,
+    twoPatternsFrom: 3,
+    breachMainShare: 0.6,
+    breachBrute: 0.1, // added to the brute share
+    harassShare: 0.25, // of the night's monsters come as fast raiders on a flank
+    rangedMix: 0.4,
+    siegeWaves: 4,
+    siegeBrute: 0.15,
     mix: { fast: 0.45, brute: 0.4, ranged: 0.15 },
     dayWanderEvery: 35,
     dayWanderMax: 2,

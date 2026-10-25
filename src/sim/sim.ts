@@ -32,6 +32,8 @@ import type {
   Command,
   Drop,
   LaborRes,
+  Pattern,
+  Threat,
   GameEvent,
   GameState,
   Monster,
@@ -877,19 +879,49 @@ export class Sim {
 
   private planNight(): void {
     const s = this.state;
+    const D = BALANCE.difficulty;
     const terrain = chunkTerrain(s.seed, chunkOf(s.castle.x));
     const stayed = stayedHere(s);
     s.newRegion = s.night > 1 && !stayed;
+    const allowed = allowedDirs(terrain);
     const n = dirCount(s.night, stayed, s.newRegion, terrain);
-    const dirs = shuffle(s, [...allowedDirs(terrain)]).slice(0, n);
-    const raw = dirs.map(() => range(s, 0.6, 1.4));
-    const sum = raw.reduce((a, b) => a + b, 0);
-    const weights = raw.map((w) => w / sum);
+    let dirs = shuffle(s, [...allowed]).slice(0, n);
+    if (dirs.length < 2) dirs = [...dirs];
+
+    // Pressure patterns: one problem on early nights, two from the middle of the run.
+    const pool = (Object.keys(D.patternFrom) as (keyof typeof D.patternFrom)[]).filter((p) => s.night >= D.patternFrom[p] && (p !== 'split' || allowed.length >= 2));
+    const picks: Pattern[] = isBossNight(s.night) ? ['boss'] : [];
+    const want = s.night >= D.twoPatternsFrom ? 2 : 1;
+    const order = shuffle(s, [...pool]);
+    for (const p of order) if (picks.length < want && !picks.includes(p)) picks.push(p);
+
+    let weights: number[];
+    if (picks.includes('split') && dirs.length >= 2) {
+      // Two opposite lanes carry most of the force in equal parts: the defence has to be divided.
+      const opposite: Record<Dir, Dir> = { N: 'S', S: 'N', E: 'W', W: 'E' };
+      const a = dirs[0];
+      if (allowed.includes(opposite[a]) && !dirs.includes(opposite[a])) dirs[1] = opposite[a];
+      else if (allowed.includes(opposite[a])) dirs = [a, opposite[a], ...dirs.filter((d) => d !== a && d !== opposite[a])];
+      const rest = dirs.length - 2;
+      weights = dirs.map((_, i) => (i < 2 ? (rest ? 0.4 : 0.5) : 0.2 / rest));
+    } else if (picks.includes('breach') && dirs.length > 1) {
+      weights = dirs.map((_, i) => (i === 0 ? D.breachMainShare : (1 - D.breachMainShare) / (dirs.length - 1)));
+    } else {
+      const raw = dirs.map(() => range(s, 0.6, 1.4));
+      const sum = raw.reduce((x, y) => x + y, 0);
+      weights = raw.map((w) => w / sum);
+    }
+    const mix = { ...D.mix, ranged: s.night >= D.rangedFrom ? D.mix.ranged : 0 };
+    if (picks.includes('breach')) mix.brute += D.breachBrute;
+    if (picks.includes('ranged')) mix.ranged = D.rangedMix;
+    if (picks.includes('siege')) mix.brute += D.siegeBrute;
+    const harassDir = picks.includes('harass') ? (allowed.find((d) => !dirs.includes(d)) ?? dirs[dirs.length - 1]) : null;
+
     const total = Math.round(monsterCount(s.night) * awarenessMult(stayed ? s.castle.nightsHere + 1 : 1));
-    const wc = waveCount(s.night);
+    const wc = picks.includes('siege') ? D.siegeWaves : waveCount(s.night);
     const length = nightLength(s.night);
     const seg = (length - 4) / wc;
-    const shares = Array.from({ length: wc }, (_, i) => 1 + i * 0.3);
+    const shares = Array.from({ length: wc }, (_, i) => (picks.includes('siege') ? 1 : 1 + i * 0.3));
     const shareSum = shares.reduce((a, b) => a + b, 0);
     const waves = shares.map((sh, i) => ({
       start: 2 + i * seg,
@@ -897,8 +929,21 @@ export class Sim {
       spawned: 0,
       boss: isBossNight(s.night) && i === wc - 1,
     }));
-    s.plan = { dirs, weights, total, waves };
+    const threat = weights.map((w): Threat => (w >= 0.45 ? 'high' : w >= 0.25 ? 'mid' : 'low'));
+    s.plan = {
+      dirs,
+      weights,
+      total,
+      waves,
+      patterns: picks,
+      threat,
+      mix,
+      harassDir,
+      harassShare: harassDir ? D.harassShare : 0,
+      confirmed: countRooms(s, 'watchtower') > 0,
+    };
     s.overflowHp = 0;
+    this.emit('msg.nightPlan', { params: { patterns: picks.join(',') } });
     // Peasants head home at dusk.
     for (const u of s.units) if (u.type === 'peasant') u.targetId = -1;
   }
@@ -1093,7 +1138,12 @@ export class Sim {
         const target = Math.min(w.count, Math.floor((w.count * (s.phaseTime - w.start)) / spread) + 1);
         while (w.spawned < target) {
           w.spawned++;
-          this.spawnMonster(this.pickType(), this.pickDir());
+          const plan = s.plan!;
+          if (plan.harassDir && nextRandom(s) < plan.harassShare) {
+            // Raiders on the flank: fast, after workers and lights.
+            const m = this.spawnMonster('fast', plan.harassDir);
+            if (m) m.harass = true;
+          } else this.spawnMonster(this.pickType(), this.pickDir());
         }
       });
     } else if (s.phase === 'day' && !s.castle.moving && s.night >= BALANCE.difficulty.dayWanderFrom) {
@@ -1123,7 +1173,7 @@ export class Sim {
 
   private pickType(): MonsterType {
     const s = this.state;
-    const mix = BALANCE.difficulty.mix;
+    const mix = s.plan?.mix ?? BALANCE.difficulty.mix;
     const ranged = s.night >= BALANCE.difficulty.rangedFrom ? mix.ranged : 0;
     const r = nextRandom(s) * (mix.fast + mix.brute + ranged);
     if (r < mix.fast) return 'fast';
@@ -1168,6 +1218,7 @@ export class Sim {
       slamTimer: 0,
       slamAt: null,
       wander: false,
+      harass: false,
     };
     s.monsters.push(m);
     if (type === 'boss') this.emit('msg.boss', { level: 'danger' });
@@ -1651,8 +1702,22 @@ export class Sim {
     // Fast monsters chase peasants and stragglers.
     let goal: Vec | null = null;
     if (m.type === 'fast') {
-      const prey = this.nearestUnit(m, BALANCE.fastTargetRange, (u) => u.type === 'peasant' || u.type === 'builder');
+      const prey = this.nearestUnit(m, m.harass ? 25 : BALANCE.fastTargetRange, (u) => u.type === 'peasant' || u.type === 'builder');
       if (prey) goal = { x: prey.x, z: prey.z };
+      else if (m.harass) {
+        // Raiders put out the lights: torches and towers first.
+        const light = this.nearestStructTo(m.x, m.z, 30, (st) => st.type !== 'wall');
+        if (light) {
+          if (Math.hypot(light.cx + 0.5 - m.x, light.cz + 0.5 - m.z) < def.range + 0.9) {
+            if (m.cooldown <= 0) {
+              m.cooldown = def.cooldown;
+              this.hurtStruct(light, def.dmg * m.dmgMult);
+            }
+            return;
+          }
+          goal = { x: light.cx + 0.5, z: light.cz + 0.5 };
+        }
+      }
     }
     if (!goal && contact && m.cooldown <= 0) {
       // Brutes still swat units that block them.
@@ -1726,10 +1791,11 @@ export class Sim {
     }
   }
 
-  private nearestStructTo(x: number, z: number, within: number): Structure | undefined {
+  private nearestStructTo(x: number, z: number, within: number, pred: (st: Structure) => boolean = () => true): Structure | undefined {
     let best: Structure | undefined;
     let bestD = within;
     for (const st of this.state.structs) {
+      if (!pred(st)) continue;
       const d = Math.hypot(st.cx + 0.5 - x, st.cz + 0.5 - z);
       if (d < bestD) {
         bestD = d;

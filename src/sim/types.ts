@@ -73,6 +73,7 @@ export interface Monster {
   slamTimer: number; // boss only
   slamAt: Vec | null; // boss telegraph target
   wander: boolean; // daytime straggler
+  harass: boolean; // goes for workers, torches and towers instead of the walls
 }
 
 export interface ResourceNode {
@@ -103,11 +104,21 @@ export interface Room {
   progress: number;
 }
 
+export type Pattern = 'breach' | 'harass' | 'split' | 'ranged' | 'siege' | 'boss';
+export type Threat = 'low' | 'mid' | 'high';
+
+/** Committed at dusk, before the warning is shown (GDD v1.2 §10.2); nothing the player does after changes it. */
 export interface WavePlan {
   dirs: Dir[];
   weights: number[]; // share of monsters per direction
   total: number;
   waves: { start: number; count: number; spawned: number; boss: boolean }[];
+  patterns: Pattern[];
+  threat: Threat[]; // per entry in dirs
+  mix: { fast: number; brute: number; ranged: number };
+  harassDir: Dir | null; // flank lane of the harassing stream
+  harassShare: number;
+  confirmed: boolean; // a watchtower confirms the forecast; otherwise it is an estimate
 }
 
 export interface RouteOption {

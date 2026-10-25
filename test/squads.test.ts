@@ -5,7 +5,7 @@ import type { GameState, Monster } from '../src/sim/types';
 import { runSeconds } from './helpers';
 
 function monster(s: GameState, x: number, z: number, type: Monster['type'] = 'fast', hp = 400): Monster {
-  const m: Monster = { id: s.nextId++, type, x, z, hp, maxHp: hp, dmgMult: 1, cooldown: 0, targetId: -1, slamTimer: 0, slamAt: null, wander: false };
+  const m: Monster = { id: s.nextId++, type, x, z, hp, maxHp: hp, dmgMult: 1, cooldown: 0, targetId: -1, slamTimer: 0, slamAt: null, wander: false, harass: false };
   s.monsters.push(m);
   return m;
 }

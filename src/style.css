@@ -472,6 +472,44 @@ body {
   width: 100%;
   font-size: 12px;
 }
+.plan-banner {
+  position: absolute;
+  top: 64px;
+  left: max(8px, env(safe-area-inset-left));
+  max-width: min(360px, 46vw);
+  display: none;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 12px;
+  background: rgba(40, 18, 18, 0.88);
+  border: 1px solid #a04030;
+  border-radius: 12px;
+  font-size: 12px;
+  pointer-events: none !important;
+}
+.plan-banner.show {
+  display: flex;
+}
+.plan-banner b {
+  color: #ffb070;
+  font-size: 14px;
+}
+.plan-banner small {
+  color: var(--muted);
+}
+.recap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px auto 4px;
+  max-width: 640px;
+  text-align: left;
+  font-size: 13px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+}
 .fps {
   position: absolute;
   right: 10px;

@@ -104,7 +104,7 @@ describe('labour policy and cargo', () => {
     const wood = s.res.wood;
     p.hp = 1;
     // A monster bite kills it.
-    s.monsters.push({ id: s.nextId++, type: 'fast', x: p.x + 0.5, z: p.z, hp: 50, maxHp: 50, dmgMult: 1, cooldown: 0, targetId: -1, slamTimer: 0, slamAt: null, wander: false });
+    s.monsters.push({ id: s.nextId++, type: 'fast', x: p.x + 0.5, z: p.z, hp: 50, maxHp: 50, dmgMult: 1, cooldown: 0, targetId: -1, slamTimer: 0, slamAt: null, wander: false, harass: false });
     runSeconds(sim, 0.2);
     expect(s.units.includes(p)).toBe(false);
     expect(s.drops.length).toBe(1);
