@@ -4,7 +4,7 @@ import type { Command } from './types';
 
 const CARD_PRIORITY: CardId[] = ['wallHp', 'soldierHp', 'towerRate', 'archerDmg', 'extraSlot', 'repairSpeed', 'carry', 'torchRadius', 'moveSpeed', 'coreHeal'];
 const ROOM_PLAN: RoomType[] = ['house', 'workshop', 'barracks', 'watchtower', 'house', 'range', 'watchtower', 'house', 'barracks', 'house', 'watchtower', 'house'];
-const WANT = { peasant: 6, builder: 2, spear: 10, archer: 8 };
+const WANT = { peasant: 6, builder: 2, spear: 7, shield: 4, archer: 8 };
 
 /**
  * Bot policies from GDD v1.2 §16: Hold camps as long as the land feeds it, Nomad moves every dawn,
@@ -59,10 +59,10 @@ export function botCommands(sim: Sim, policy: BotPolicy = 'tactical'): Command[]
     for (let i = 0; i < n; i++) {
       const r = s.rooms[i];
       if (!r || r.queue.length > 0) continue;
-      const type = BALANCE.rooms[r.type].trains;
-      if (!type || counts[type] >= WANT[type]) continue;
+      const type = BALANCE.rooms[r.type].trains.find((t) => counts[t] < WANT[t]);
+      if (!type) continue;
       if (canAfford(s, BALANCE.units[type].cost) && s.res.food > 25) {
-        out.push({ t: 'queueUnit', slot: i });
+        out.push({ t: 'queueUnit', slot: i, type });
         break;
       }
     }

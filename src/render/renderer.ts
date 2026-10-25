@@ -309,6 +309,8 @@ export class GameRenderer {
     this.units.peasant.setModel(m.chars.peasant);
     this.units.builder.setModel(m.chars.builder);
     this.units.spear.setModel(m.chars.spear);
+    // Shieldbearers reuse the knight, a size up and steel-blue (see CREDITS.md).
+    this.units.shield.setModel(m.chars.spear);
     this.units.archer.setModel(m.chars.archer);
     this.monsters.fast.setModel(m.chars.fast);
     this.monsters.brute.setModel(m.chars.brute);
@@ -514,10 +516,11 @@ export class GameRenderer {
       const working = u.job === 'gather' || u.job === 'build' || u.job === 'repair' || u.job === 'attack';
       const pose: Pose = mo.moving < 0.15 ? 'move' : working ? 'act' : 'idle';
       const hurt = u.hp / u.maxHp;
-      const col = hurt > 0.5 ? 0xffffff : hurt > 0.25 ? 0xffb0a0 : 0xff6050;
+      const col = hurt > 0.5 ? (u.type === 'shield' ? 0xa8c0ff : 0xffffff) : hurt > 0.25 ? 0xffb0a0 : 0xff6050;
       const onWall = crowd.hasModel && u.type === 'archer' && Math.abs(u.x - c.x) < 3.2 && Math.abs(u.z - c.z) < 3.2;
       const bob = crowd.hasModel ? 0 : pose === 'act' ? Math.abs(Math.sin(this.time * 8 + u.id)) * 0.1 : 0;
-      crowd.add(pose, this.time * (pose === 'move' ? 1.1 : 1.4) + u.id * 0.37, u.x, (onWall ? WALL_WALK_Y : 0) + bob, u.z, mo.rot, crowd.hasModel ? 1 : 1.35, col);
+      const size = (crowd.hasModel ? 1 : 1.35) * (u.type === 'shield' ? 1.12 : 1);
+      crowd.add(pose, this.time * (pose === 'move' ? 1.1 : 1.4) + u.id * 0.37, u.x, (onWall ? WALL_WALK_Y : 0) + bob, u.z, mo.rot, size, col);
       if (u.type === selType) this.rings.add(u.x, onWall ? WALL_WALK_Y + 0.05 : 0.06, u.z, 0, 1, 1, 1, 0xfff080);
       else if (s.selectedIds.includes(u.id)) this.rings.add(u.x, onWall ? WALL_WALK_Y + 0.05 : 0.06, u.z, 0, 1.1, 1, 1.1, 0x80f0ff);
     }

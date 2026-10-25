@@ -1,5 +1,6 @@
 import type {
   AbilityId,
+  Formation,
   CardId,
   Dir,
   MonsterType,
@@ -21,7 +22,9 @@ export type Phase = 'day' | 'dusk' | 'night' | 'dawn' | 'gameover';
 export type Job = 'gather' | 'deliver' | 'build' | 'repair' | 'guard' | 'shelter' | 'attack' | 'idle';
 
 export interface Order {
-  kind: 'move' | 'gather' | 'home' | 'repair' | 'dismantle';
+  // move = go there, fight what comes (flexible); hold = stand, hit only what reaches; guard = stay by a
+  // unit/building/castle and intercept; focus = hunt one monster; retreat = run home without fighting.
+  kind: 'move' | 'gather' | 'home' | 'repair' | 'dismantle' | 'hold' | 'guard' | 'focus' | 'retreat';
   pos: Vec;
   targetId?: number;
 }
@@ -43,6 +46,7 @@ export interface Unit {
   inside: boolean; // sheltered inside the castle
   slot: number; // follow slot around the castle while moving
   workRes: Res | null; // resource the labour AI assigned this peasant to
+  squad: number; // 0 = none, 1..5
 }
 
 export interface Drop {
@@ -199,6 +203,7 @@ export interface GameState {
   drops: Drop[];
   deliveries: { tick: number; res: Res; n: number }[];
   repairDebt: number; // wood owed for repairs, paid a whole unit at a time
+  formation: Formation;
   history: NightRecord[];
   fireDone: boolean;
   newRegion: boolean;
@@ -225,12 +230,15 @@ export type Command =
   | { t: 'selectUnits'; ids: number[] }
   | { t: 'releaseUnits' }
   | { t: 'setLabor'; res: LaborRes; priority: number }
-  | { t: 'order'; pos: Vec; targetId?: number }
+  | { t: 'order'; pos: Vec; targetId?: number; mode?: 'move' | 'hold' | 'guard' | 'focus' | 'retreat' }
+  | { t: 'assignSquad'; ids: number[]; squad: number }
+  | { t: 'selectSquad'; squad: number }
+  | { t: 'setFormation'; formation: Formation }
   | { t: 'orderAll'; kind: 'home' }
   | { t: 'build'; type: StructType; pos: Vec }
   | { t: 'dismantle'; pos: Vec }
   | { t: 'placeRoom'; slot: number; type: RoomType }
-  | { t: 'queueUnit'; slot: number }
+  | { t: 'queueUnit'; slot: number; type?: UnitType }
   | { t: 'upgradeTier' }
   | { t: 'toggleMove' }
   | { t: 'ability'; id: AbilityId; pos?: Vec }

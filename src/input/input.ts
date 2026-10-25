@@ -1,6 +1,6 @@
 import { BALANCE } from '../data/balance';
 import type { GameRenderer } from '../render/renderer';
-import { distToCastle, type Sim } from '../sim/sim';
+import { distToCastle, isLit, lights, type Sim } from '../sim/sim';
 import type { Vec } from '../sim/types';
 import type { GameCtl, Hud } from '../ui/hud';
 
@@ -157,6 +157,11 @@ export class Input {
       this.ctl.setMode({ kind: 'none' });
       return;
     }
+    if (mode.kind === 'order') {
+      this.tacticalAt(mode.mode, pos);
+      this.ctl.setMode({ kind: 'none' }, true);
+      return;
+    }
     // Clicking a unit picks it (Shift adds or removes).
     const unit = this.unitAt(pos);
     if (unit) {
@@ -170,6 +175,41 @@ export class Input {
       return;
     }
     if (onCastle) this.hud.toggleRooms(true);
+  }
+
+  /** Hold at a spot, guard a unit/building/the castle, or focus a monster under the pointer. */
+  private tacticalAt(mode: 'hold' | 'guard' | 'focus', pos: Vec): void {
+    const s = this.getSim().state;
+    if (mode === 'focus') {
+      const m = this.monsterAt(pos);
+      if (m !== null) this.ctl.send({ t: 'order', pos, targetId: m, mode: 'focus' });
+      return;
+    }
+    if (mode === 'guard') {
+      const unit = this.unitAt(pos);
+      const st = s.structs.find((x) => x.cx === Math.floor(pos.x) && x.cz === Math.floor(pos.z));
+      const target = unit ?? st?.id ?? -2; // -2: the castle
+      this.ctl.send({ t: 'order', pos, targetId: target, mode: 'guard' });
+      return;
+    }
+    this.ctl.send({ t: 'order', pos, mode: 'hold' });
+  }
+
+  /** A visible monster under a ground point. */
+  private monsterAt(pos: Vec): number | null {
+    const s = this.getSim().state;
+    const ls = lights(s);
+    let best: number | null = null;
+    let bestD = 1.4;
+    for (const m of s.monsters) {
+      if (!isLit(s, ls, m.x, m.z)) continue;
+      const d = Math.hypot(m.x - pos.x, m.z - pos.z);
+      if (d < bestD) {
+        bestD = d;
+        best = m.id;
+      }
+    }
+    return best;
   }
 
   /** Nearest unit standing under a ground point, by id. */
@@ -212,6 +252,12 @@ export class Input {
       if (distToCastle(s, pos.x, pos.z) < 0.5) this.hud.toggleRooms(true);
       return;
     }
+    // Right-click on a monster focuses it.
+    const m = this.monsterAt(pos);
+    if (m !== null) {
+      this.ctl.send({ t: 'order', pos, targetId: m, mode: 'focus' });
+      return;
+    }
     this.ctl.send({ t: 'order', pos });
   }
 
@@ -223,11 +269,31 @@ export class Input {
       case 'Digit1':
       case 'Digit2':
       case 'Digit3':
-      case 'Digit4': {
-        const g = Number(e.code.slice(-1)) - 1;
-        this.ctl.send({ t: 'selectGroup', group: s.selected === g ? -1 : g });
+      case 'Digit4':
+      case 'Digit5': {
+        // 1–5 select a squad; Ctrl/Cmd + number puts the picked units in it.
+        const n = Number(e.code.slice(-1));
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          if (s.selectedIds.length) this.ctl.send({ t: 'assignSquad', ids: s.selectedIds, squad: n });
+        } else this.ctl.send({ t: 'selectSquad', squad: n });
         break;
       }
+      case 'KeyG':
+        this.ctl.setMode({ kind: 'order', mode: 'hold' }, true);
+        break;
+      case 'KeyU':
+        this.ctl.setMode({ kind: 'order', mode: 'guard' }, true);
+        break;
+      case 'KeyF':
+        this.ctl.setMode({ kind: 'order', mode: 'focus' }, true);
+        break;
+      case 'KeyR':
+        this.ctl.send({ t: 'order', pos: { x: s.castle.x, z: s.castle.z }, mode: 'retreat' });
+        break;
+      case 'KeyL':
+        this.ctl.send({ t: 'setFormation', formation: s.formation === 'line' ? 'ring' : 'line' });
+        break;
       case 'Tab':
         e.preventDefault();
         this.hud.toggleRooms();

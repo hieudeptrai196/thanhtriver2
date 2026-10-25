@@ -1,10 +1,12 @@
 import {
   BALANCE,
   CARD_IDS,
+  SOLDIER_TYPES,
   UNIT_TYPES,
   type AbilityId,
   type CardId,
   type Cost,
+  type DamageType,
   type Dir,
   type MonsterType,
   type Res,
@@ -105,7 +107,7 @@ export function createState(seed: number): GameState {
     genChunk: -2,
     selected: -1,
     selectedIds: [],
-    groupOrders: { peasant: null, builder: null, spear: null, archer: null },
+    groupOrders: { peasant: null, builder: null, spear: null, shield: null, archer: null },
     cooldowns: { arrowRain: 0, bell: 0 },
     mods: {
       soldierHp: 0,
@@ -134,6 +136,7 @@ export function createState(seed: number): GameState {
     drops: [],
     deliveries: [],
     repairDebt: 0,
+    formation: 'line',
     fireDone: false,
     newRegion: false,
   };
@@ -164,6 +167,7 @@ function addUnit(s: GameState, type: UnitType, pos: Vec): Unit {
     inside: false,
     slot: s.units.length,
     workRes: null,
+    squad: BALANCE.squads.defaultOf[type] ?? 0,
   };
   s.units.push(u);
   return u;
@@ -222,7 +226,7 @@ export function synergySlots(s: GameState): boolean[] {
 
 export function unitMaxHp(s: GameState, type: UnitType): number {
   let mult = 1;
-  if (type === 'spear' || type === 'archer') mult += s.mods.soldierHp;
+  if (SOLDIER_TYPES.includes(type)) mult += s.mods.soldierHp;
   if (type === 'spear' && hasSynergy(s, 'barracks', 'workshop')) mult += BALANCE.synergy.barracksWorkshopSpearHp;
   return Math.round(U[type].hp * mult);
 }
@@ -353,6 +357,7 @@ export class Sim {
   grid = new NavGrid();
   private events: GameEvent[] = [];
   private lightCache: Light[] = [];
+  private engaged = new Map<number, number>(); // melee monsters on each unit this tick
   private warned = { wall: false, core: false, wallBroken: false };
 
   constructor(state: GameState) {
@@ -364,6 +369,9 @@ export class Sim {
     state.drops ??= [];
     state.deliveries ??= [];
     state.repairDebt ??= 0;
+    state.formation ??= 'line';
+    state.groupOrders.shield ??= null;
+    for (const u of state.units) u.squad ??= BALANCE.squads.defaultOf[u.type] ?? 0;
     state.nightStats = { ...emptyNightStats(), ...state.nightStats };
     this.state = state;
     this.grid.rebuild(state);
@@ -423,7 +431,7 @@ export class Sim {
         for (const u of s.units) if (u.type === 'peasant' && !u.order) u.workRes = null;
         break;
       case 'order':
-        this.order(c.pos, c.targetId);
+        this.order(c.pos, c.targetId, c.mode);
         break;
       case 'orderAll':
         for (const type of UNIT_TYPES) this.setGroupOrder(type, type === 'peasant' ? { kind: 'home', pos: { x: s.castle.x, z: s.castle.z } } : null);
@@ -439,7 +447,20 @@ export class Sim {
         this.placeRoom(c.slot, c.type);
         break;
       case 'queueUnit':
-        this.queueUnit(c.slot);
+        this.queueUnit(c.slot, c.type);
+        break;
+      case 'assignSquad':
+        for (const u of s.units) if (c.ids.includes(u.id)) u.squad = Math.max(0, Math.min(BALANCE.squads.count, c.squad));
+        this.emit('msg.squadAssigned', { params: { n: c.squad } });
+        break;
+      case 'selectSquad': {
+        const ids = s.units.filter((u) => u.squad === c.squad && !u.inside).map((u) => u.id);
+        s.selectedIds = ids;
+        if (ids.length) s.selected = -1;
+        break;
+      }
+      case 'setFormation':
+        s.formation = c.formation;
         break;
       case 'upgradeTier':
         this.upgradeTier();
@@ -484,29 +505,97 @@ export class Sim {
     return onCastle ? null : { kind: 'move', pos: p };
   }
 
-  private order(pos: Vec, targetId?: number): void {
+  private order(pos: Vec, targetId?: number, mode?: 'move' | 'hold' | 'guard' | 'focus' | 'retreat'): void {
     const s = this.state;
     const p = { x: pos.x, z: pos.z };
-    if (s.selectedIds.length) {
-      // Hand-picked units: each gets its own order, spread around the point so they do not stack.
-      const picked = s.units.filter((u) => s.selectedIds.includes(u.id));
-      const onCastle = distToCastle(s, pos.x, pos.z) < 0.5;
-      picked.forEach((u, i) => {
-        const r = i === 0 || onCastle ? 0 : 0.95 * Math.sqrt(i);
-        const a = i * 2.39996;
-        const spot = { x: pos.x + Math.cos(a) * r, z: pos.z + Math.sin(a) * r };
-        u.order = this.orderFor(u.type, onCastle ? p : spot, targetId);
-        u.targetId = -1;
-        u.work = 0;
-        if (u.type === 'peasant' && u.order?.kind !== 'home' && u.inside && s.phase === 'day') this.exitCastle(u);
-      });
+    const picked = s.selectedIds.length
+      ? s.units.filter((u) => s.selectedIds.includes(u.id))
+      : s.selected >= 0
+        ? null
+        : [];
+    if (picked === null) {
+      // Whole group by type (the default orders new units of that type inherit too).
+      const type = UNIT_TYPES[s.selected];
+      this.setGroupOrder(type, mode && mode !== 'move' ? this.tacticalOrder(type, mode, p, targetId) : this.orderFor(type, pos, targetId));
       this.emit('fx.order', { pos: p });
       return;
     }
-    if (s.selected < 0) return;
-    const type = UNIT_TYPES[s.selected];
-    this.setGroupOrder(type, this.orderFor(type, pos, targetId));
+    if (picked.length === 0) return;
+    const onCastle = distToCastle(s, pos.x, pos.z) < 0.5;
+    const spots = this.formationSpots(picked, p, onCastle || mode === 'guard' || mode === 'focus' || mode === 'retreat');
+    picked.forEach((u, i) => {
+      const spot = spots[i];
+      u.order = mode && mode !== 'move' ? this.tacticalOrder(u.type, mode, spot, targetId) : this.orderFor(u.type, onCastle ? p : spot, targetId);
+      u.targetId = -1;
+      u.work = 0;
+      if (u.type === 'peasant' && u.order?.kind !== 'home' && u.inside && s.phase === 'day') this.exitCastle(u);
+    });
     this.emit('fx.order', { pos: p });
+  }
+
+  /** Hold / guard / focus / retreat for soldiers; workers read retreat as "go inside" and ignore the rest. */
+  private tacticalOrder(type: UnitType, mode: 'hold' | 'guard' | 'focus' | 'retreat', pos: Vec, targetId?: number): Order | null {
+    const s = this.state;
+    const soldier = SOLDIER_TYPES.includes(type);
+    if (mode === 'retreat') return type === 'peasant' ? { kind: 'home', pos: { x: s.castle.x, z: s.castle.z } } : { kind: 'retreat', pos: { x: s.castle.x, z: s.castle.z } };
+    if (!soldier) return this.orderFor(type, pos, targetId);
+    if (mode === 'hold') return { kind: 'hold', pos };
+    if (mode === 'focus') return targetId !== undefined ? { kind: 'focus', pos, targetId } : { kind: 'move', pos };
+    return { kind: 'guard', pos, targetId: targetId ?? T_WALL };
+  }
+
+  /**
+   * Where each picked unit should stand (GDD v1.2 §8.3). Line: shields and spears in a front row facing away
+   * from the castle, archers in a row behind. Ring: melee on a circle, archers inside. Workers spiral.
+   */
+  private formationSpots(units: Unit[], at: Vec, cluster: boolean): Vec[] {
+    const s = this.state;
+    const out: Vec[] = new Array(units.length);
+    if (cluster) {
+      units.forEach((_, i) => (out[i] = { x: at.x, z: at.z }));
+      return out;
+    }
+    const F = BALANCE.formation;
+    const melee = units.map((u, i) => [u, i] as const).filter(([u]) => u.type === 'shield' || u.type === 'spear');
+    melee.sort(([a], [b]) => (a.type === b.type ? 0 : a.type === 'shield' ? -1 : 1));
+    const ranged = units.map((u, i) => [u, i] as const).filter(([u]) => u.type === 'archer');
+    const others = units.map((u, i) => [u, i] as const).filter(([u]) => !SOLDIER_TYPES.includes(u.type));
+    let fx = at.x - s.castle.x;
+    let fz = at.z - s.castle.z;
+    const len = Math.hypot(fx, fz);
+    if (len < 0.5) {
+      fx = 1;
+      fz = 0;
+    } else {
+      fx /= len;
+      fz /= len;
+    }
+    const px = -fz;
+    const pz = fx;
+    const row = (list: (readonly [Unit, number])[], back: number) =>
+      list.forEach(([, i], k) => {
+        const off = (k - (list.length - 1) / 2) * F.spacing;
+        out[i] = { x: at.x + px * off - fx * back, z: at.z + pz * off - fz * back };
+      });
+    const ring = (list: (readonly [Unit, number])[], r: number) =>
+      list.forEach(([, i], k) => {
+        const a = (k / Math.max(1, list.length)) * Math.PI * 2;
+        out[i] = { x: at.x + Math.cos(a) * r, z: at.z + Math.sin(a) * r };
+      });
+    if (s.formation === 'ring') {
+      const r = Math.max(1.8, (melee.length * F.spacing) / (Math.PI * 2));
+      ring(melee, r);
+      ring(ranged, melee.length ? r * 0.45 : Math.max(1.4, (ranged.length * F.spacing) / (Math.PI * 2)));
+    } else {
+      row(melee, 0);
+      row(ranged, melee.length ? F.rowGap : 0);
+    }
+    others.forEach(([, i], k) => {
+      const r = k === 0 ? 0 : 0.95 * Math.sqrt(k);
+      const a = k * 2.39996;
+      out[i] = { x: at.x + Math.cos(a) * r, z: at.z + Math.sin(a) * r + (melee.length + ranged.length ? 2 : 0) };
+    });
+    return out;
   }
 
   /** Hand-picked units drop their own orders and go back to their group's default work. */
@@ -586,11 +675,12 @@ export class Sim {
     this.emit('msg.roomBuilt', { params: { room: type } });
   }
 
-  private queueUnit(slot: number): void {
+  private queueUnit(slot: number, wanted?: UnitType): void {
     const s = this.state;
     const room = s.rooms[slot];
     if (!room || slot >= slotCount(s)) return;
-    const type = BALANCE.rooms[room.type].trains;
+    const trains = BALANCE.rooms[room.type].trains;
+    const type = wanted && trains.includes(wanted) ? wanted : trains[0];
     if (!type) return;
     if (room.queue.length >= BALANCE.roomQueueMax) return this.emit('msg.queueFull', { level: 'warn' });
     if (popUsed(s) >= popCap(s)) return this.emit('msg.popFull', { level: 'warn' });
@@ -738,6 +828,7 @@ export class Sim {
     s.tick++;
     s.phaseTime += DT;
     this.lightCache = lights(s);
+    this.engaged.clear();
 
     for (const k of Object.keys(s.cooldowns) as AbilityId[]) s.cooldowns[k] = Math.max(0, s.cooldowns[k] - DT);
     if (s.drops.length) {
@@ -1106,6 +1197,7 @@ export class Sim {
       case 'builder':
         return this.builder(u);
       case 'spear':
+      case 'shield':
         return this.soldier(u, false);
       case 'archer':
         return this.soldier(u, true);
@@ -1401,36 +1493,60 @@ export class Sim {
   private soldier(u: Unit, archer: boolean): void {
     const s = this.state;
     const c = s.castle;
-    const def = archer ? U.archer : U.spear;
+    const def = U[u.type as 'spear' | 'shield' | 'archer'];
+    const o = u.order;
+    // Retreat: run home and do not stop to fight.
+    if (o?.kind === 'retreat') {
+      u.job = 'shelter';
+      u.targetId = -1;
+      if (this.walkTo(u, c.x, c.z, 0.8, true)) u.order = null;
+      return;
+    }
+    const reach = archer ? archerRange(s, u) : def.range;
     let anchor: Vec;
-    if (u.order?.kind === 'move') anchor = u.order.pos;
-    else if (archer) {
+    let aggro = archer ? reach : def.aggro;
+    let holdGround = false;
+    let focus: Monster | undefined;
+    if (o?.kind === 'focus') {
+      focus = s.monsters.find((m) => m.id === o.targetId && m.hp > 0);
+      if (!focus) u.order = null;
+    }
+    if (u.order?.kind === 'guard') {
+      const g = this.guardPos(u.order.targetId ?? -1);
+      if (!g) u.order = null;
+      anchor = g ?? { x: c.x, z: c.z };
+      aggro = Math.max(aggro, 6);
+    } else if (u.order?.kind === 'hold') {
+      anchor = u.order.pos;
+      holdGround = true;
+      aggro = reach + 0.5;
+    } else if (u.order?.kind === 'move' || u.order?.kind === 'focus') {
+      anchor = u.order.pos;
+    } else if (archer) {
       const archers = s.units.filter((x) => x.type === 'archer' && !x.order);
       const i = archers.indexOf(u);
       const a = (i / Math.max(1, archers.length)) * Math.PI * 2 + 0.4;
       anchor = { x: c.x + Math.cos(a) * C.stationRadius, z: c.z + Math.sin(a) * C.stationRadius };
     } else {
-      // Spears stand guard on the side where monsters come from.
+      // Melee stands guard on the side where monsters come from.
       const a = this.guardAngle(u);
       anchor = { x: c.x + Math.cos(a) * (C.halfSize + 2.5), z: c.z + Math.sin(a) * (C.halfSize + 2.5) };
+      if (s.phase === 'day') {
+        // By day idle melee protects the whole camp from stragglers.
+        anchor = { x: c.x, z: c.z };
+        aggro = BALANCE.difficulty.dayDefendRadius;
+      }
     }
-    const reach = archer ? archerRange(s, u) : def.range;
-    let aggro = archer ? reach : U.spear.aggro;
-    if (!archer && !u.order && s.phase === 'day') {
-      // By day idle spearmen protect the whole camp from stragglers.
-      anchor = { x: c.x, z: c.z };
-      aggro = BALANCE.difficulty.dayDefendRadius;
-    }
-    // Find a target near the anchor.
-    let target = u.targetId >= 0 ? s.monsters.find((m) => m.id === u.targetId && m.hp > 0) : undefined;
-    if (target && (Math.hypot(target.x - anchor.x, target.z - anchor.z) > aggro + 4 || !this.canSee(target, u, archer))) target = undefined;
+    // Pick a target: the focus target, else the nearest visible monster near the anchor.
+    let target = focus ?? (u.targetId >= 0 ? s.monsters.find((m) => m.id === u.targetId && m.hp > 0) : undefined);
+    if (!focus && target && (Math.hypot(target.x - anchor.x, target.z - anchor.z) > aggro + (holdGround ? 0 : 4) || !this.canSee(target, u, archer))) target = undefined;
     if (!target) {
       let bestD = Infinity;
       for (const m of s.monsters) {
         if (!this.canSee(m, u, archer)) continue;
         const da = Math.hypot(m.x - anchor.x, m.z - anchor.z);
         const du = Math.hypot(m.x - u.x, m.z - u.z);
-        if (archer ? du > reach : da > aggro) continue;
+        if (archer || holdGround ? du > reach + 0.5 : da > aggro) continue;
         if (du < bestD) {
           bestD = du;
           target = m;
@@ -1448,17 +1564,32 @@ export class Sim {
           this.hurtMonster(target, dmg);
           this.emit(archer ? 'fx.arrow' : 'fx.hit', { pos: { x: u.x, z: u.z }, to: { x: target.x, z: target.z } });
         }
-      } else if (!archer) this.walkTo(u, target.x, target.z, reach * 0.8);
-      return;
+        return;
+      }
+      // Hold never chases; archers close in only on a focus target.
+      if (!holdGround && (!archer || focus)) {
+        this.walkTo(u, target.x, target.z, archer ? reach * 0.9 : reach * 0.8);
+        return;
+      }
     }
     u.job = 'guard';
     if (archer && !u.order) this.walkTo(u, anchor.x, anchor.z, 0.3, true);
-    else this.walkTo(u, anchor.x, anchor.z, 0.6);
+    else this.walkTo(u, anchor.x, anchor.z, holdGround ? 0.3 : 0.6);
+  }
+
+  /** Where a guard order stands: a unit, a building, or the castle (-2). Null when the charge is gone. */
+  private guardPos(id: number): Vec | null {
+    const s = this.state;
+    if (id === T_WALL) return { x: s.castle.x, z: s.castle.z };
+    const unit = s.units.find((u) => u.id === id && !u.inside);
+    if (unit) return { x: unit.x, z: unit.z };
+    const st = s.structs.find((x) => x.id === id);
+    return st ? { x: st.cx + 0.5, z: st.cz + 0.5 } : null;
   }
 
   private guardAngle(u: Unit): number {
     const s = this.state;
-    const spears = s.units.filter((x) => x.type === 'spear' && !x.order);
+    const spears = s.units.filter((x) => (x.type === 'spear' || x.type === 'shield') && !x.order);
     const i = Math.max(0, spears.indexOf(u));
     const dirs = s.plan?.dirs ?? [];
     if (dirs.length === 0) return (i / Math.max(1, spears.length)) * Math.PI * 2;
@@ -1491,18 +1622,20 @@ export class Sim {
       if (u) {
         if (m.cooldown <= 0) {
           m.cooldown = def.cooldown;
-          this.hurtUnit(u, def.dmg * m.dmgMult);
+          this.hurtUnit(u, def.dmg * m.dmgMult, BALANCE.monsterDamage[m.type]);
           this.emit('fx.spit', { pos: { x: m.x, z: m.z }, to: { x: u.x, z: u.z } });
         }
         return;
       }
     }
     // Melee contact with units (brutes prefer buildings).
-    const contact = this.nearestUnit(m, def.range + 0.4, () => true);
+    // Frontage (GDD v1.2 §8.4): only a few monsters can get at one unit; the rest have to find a gap.
+    const contact = this.nearestUnit(m, def.range + 0.4, (u) => (this.engaged.get(u.id) ?? 0) < BALANCE.frontage);
+    if (contact) this.engaged.set(contact.id, (this.engaged.get(contact.id) ?? 0) + 1);
     if (contact && m.type !== 'brute' && m.type !== 'boss') {
       if (m.cooldown <= 0) {
         m.cooldown = def.cooldown;
-        this.hurtUnit(contact, def.dmg * m.dmgMult);
+        this.hurtUnit(contact, def.dmg * m.dmgMult, BALANCE.monsterDamage[m.type]);
         this.emit('fx.bite', { pos: { x: contact.x, z: contact.z } });
       }
       return;
@@ -1524,7 +1657,7 @@ export class Sim {
     if (!goal && contact && m.cooldown <= 0) {
       // Brutes still swat units that block them.
       m.cooldown = def.cooldown;
-      this.hurtUnit(contact, def.dmg * m.dmgMult);
+      this.hurtUnit(contact, def.dmg * m.dmgMult, BALANCE.monsterDamage[m.type]);
       return;
     }
     let next: Vec | null;
@@ -1585,7 +1718,7 @@ export class Sim {
       const at = m.slamAt;
       const r2 = b.slamRadius * b.slamRadius;
       for (const st of [...s.structs]) if ((st.cx + 0.5 - at.x) ** 2 + (st.cz + 0.5 - at.z) ** 2 <= r2) this.hurtStruct(st, b.slamDmg * 2);
-      for (const u of s.units) if (!u.inside && (u.x - at.x) ** 2 + (u.z - at.z) ** 2 <= r2) this.hurtUnit(u, b.slamDmg * 0.5);
+      for (const u of s.units) if (!u.inside && (u.x - at.x) ** 2 + (u.z - at.z) ** 2 <= r2) this.hurtUnit(u, b.slamDmg * 0.5, 'siege');
       if (distToCastle(s, at.x, at.z) < b.slamRadius) this.hurtCastle(b.slamDmg, m);
       this.emit('fx.slam', { pos: { ...at }, params: { r: b.slamRadius } });
       m.slamAt = null;
@@ -1703,9 +1836,9 @@ export class Sim {
     this.emit('fx.monsterDie', { pos: { x: m.x, z: m.z }, params: { type: m.type } });
   }
 
-  private hurtUnit(u: Unit, dmg: number): void {
+  private hurtUnit(u: Unit, dmg: number, type: DamageType = 'physical'): void {
     if (u.hp <= 0) return;
-    u.hp -= dmg;
+    u.hp -= dmg * (BALANCE.resist[u.type]?.[type] ?? 1);
     if (u.hp > 0) return;
     const st = this.state.nightStats;
     if (u.carry > 0 && u.carryRes) {
@@ -1853,6 +1986,11 @@ export class Sim {
       if (us[i].inside) continue;
       for (let j = i + 1; j < us.length; j++) if (!us[j].inside) push(us[i], us[j], ur, 1, 1);
     }
+    // Units stand their ground against monsters: soldiers barely give way, shields not at all.
+    for (const m of ms) {
+      const rm = BALANCE.monsters[m.type].radius;
+      for (const u of us) if (!u.inside) push(m, u, rm + BALANCE.unitRadius, 1, BALANCE.shove[u.type]);
+    }
     // Keep monsters out of blocked cells after pushing.
     for (const m of ms) {
       const c = this.grid.cellAt(m.x, m.z);
@@ -1881,7 +2019,7 @@ export function incomePerMin(s: GameState, res: Res): number {
 }
 
 export function groupCounts(s: GameState): Record<UnitType, number> {
-  const out = { peasant: 0, builder: 0, spear: 0, archer: 0 } as Record<UnitType, number>;
+  const out = Object.fromEntries(UNIT_TYPES.map((t) => [t, 0])) as Record<UnitType, number>;
   for (const u of s.units) out[u.type]++;
   return out;
 }

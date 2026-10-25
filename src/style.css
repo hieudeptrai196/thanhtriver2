@@ -388,7 +388,7 @@ body {
 .pick-bar {
   position: absolute;
   left: 50%;
-  bottom: 118px;
+  bottom: calc(var(--bb, 110px) + 46px);
   transform: translateX(-50%);
   display: none;
   gap: 6px;
@@ -399,6 +399,37 @@ body {
   border-radius: 12px;
   white-space: nowrap;
 }
+.squad-bar {
+  position: absolute;
+  left: max(6px, env(safe-area-inset-left));
+  bottom: calc(var(--bb, 110px) + 2px);
+  display: flex;
+  gap: 4px;
+}
+.btn.squad {
+  min-width: 56px;
+  font-size: 12px;
+}
+.order-bar {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--bb, 110px) + 98px);
+  transform: translateX(-50%);
+  display: none;
+  gap: 4px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid #f0c050;
+  border-radius: 12px;
+}
+.order-bar.show {
+  display: flex;
+}
+.assign {
+  color: var(--muted);
+  font-size: 12px;
+  margin-left: 6px;
+}
 .pick-bar.show {
   display: flex;
 }
@@ -407,11 +438,7 @@ body {
   font-size: 14px;
   color: #b0f6ff;
 }
-@media (max-height: 520px) {
-  .pick-bar {
-    bottom: 64px;
-  }
-}
+
 .tb-food {
   font-size: 12px;
   color: var(--muted);

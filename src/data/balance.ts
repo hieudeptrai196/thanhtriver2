@@ -3,7 +3,9 @@
 export type Res = 'wood' | 'stone' | 'food' | 'gold';
 export type Cost = Partial<Record<Res, number>>;
 
-export type UnitType = 'peasant' | 'builder' | 'spear' | 'archer';
+export type UnitType = 'peasant' | 'builder' | 'spear' | 'shield' | 'archer';
+export type DamageType = 'physical' | 'piercing' | 'siege';
+export type Formation = 'line' | 'ring';
 export type MonsterType = 'fast' | 'brute' | 'ranged' | 'boss';
 export type RoomType = 'house' | 'barracks' | 'range' | 'workshop' | 'watchtower';
 export type StructType = 'wall' | 'tower' | 'torch';
@@ -23,7 +25,8 @@ export type CardId =
   | 'archerDmg'
   | 'coreHeal';
 
-export const UNIT_TYPES: UnitType[] = ['peasant', 'builder', 'spear', 'archer'];
+export const UNIT_TYPES: UnitType[] = ['peasant', 'builder', 'spear', 'shield', 'archer'];
+export const SOLDIER_TYPES: UnitType[] = ['spear', 'shield', 'archer'];
 
 export const BALANCE = {
   tickRate: 60,
@@ -123,9 +126,20 @@ export const BALANCE = {
     peasant: { hp: 40, speed: 3.4, dmg: 2, range: 1.2, cooldown: 1.2, cost: { food: 15 } as Cost, train: 6, carry: 10, gatherTime: 3 },
     builder: { hp: 50, speed: 3.2, dmg: 3, range: 1.2, cooldown: 1.2, cost: { food: 15, wood: 10 } as Cost, train: 7, buildRate: 10, repairRate: 12 },
     spear: { hp: 110, speed: 3.6, dmg: 14, range: 1.6, cooldown: 1.0, cost: { food: 20, wood: 15 } as Cost, train: 8, aggro: 7 },
+    // Shieldbearer (GDD v1.2 §9.1): soaks pressure in front of the archers, shrugs off arrows, hard to push.
+    shield: { hp: 190, speed: 3.0, dmg: 6, range: 1.5, cooldown: 1.2, cost: { food: 20, wood: 10, stone: 10 } as Cost, train: 9, aggro: 5 },
     archer: { hp: 60, speed: 3.4, dmg: 8, range: 9, cooldown: 1.3, cost: { food: 20, wood: 25 } as Cost, train: 8, aggro: 10 },
   },
-  startUnits: { peasant: 4, builder: 1, spear: 3, archer: 0 } as Record<UnitType, number>,
+  // Damage taken multipliers by damage type; 1 when not listed.
+  resist: {
+    shield: { piercing: 0.5 },
+  } as Partial<Record<UnitType, Partial<Record<DamageType, number>>>>,
+  // How hard a unit is to shove when monsters press into it (0 = immovable).
+  shove: { peasant: 0.6, builder: 0.6, spear: 0.25, shield: 0, archer: 0.5 } as Record<UnitType, number>,
+  frontage: 3, // most melee monsters that can hit one unit at once
+  squads: { count: 5, defaultOf: { spear: 1, shield: 2, archer: 3 } as Partial<Record<UnitType, number>> },
+  formation: { spacing: 1.1, rowGap: 1.8 },
+  startUnits: { peasant: 4, builder: 1, spear: 3, shield: 0, archer: 0 } as Record<UnitType, number>,
   foodPerUnit: 1,
   // Hunger (GDD v1.2): no sudden HP loss. A short dawn weakens everyone; a second one in a row also
   // makes one villager leave. Eating fully at dawn clears it.
@@ -138,17 +152,18 @@ export const BALANCE = {
     ranged: { hp: 40, speed: 2.8, dmg: 7, range: 7, cooldown: 1.8, gold: 2, radius: 0.45 },
     boss: { hp: 1000, speed: 1.6, dmg: 28, range: 2, cooldown: 2.2, gold: 50, radius: 1.2 },
   } as Record<MonsterType, { hp: number; speed: number; dmg: number; range: number; cooldown: number; gold: number; radius: number }>,
+  monsterDamage: { fast: 'physical', brute: 'siege', ranged: 'piercing', boss: 'siege' } as Record<MonsterType, DamageType>,
   monsterGrowthPerNight: 0.06, // hp multiplier per night
   boss: { slamEvery: 7, slamWarn: 1.6, slamRadius: 4.5, slamDmg: 80 },
   fastTargetRange: 14,
 
   rooms: {
-    house: { cost: { wood: 40 } as Cost, pop: 3, trains: 'peasant' as UnitType | null, tier: 1 },
-    barracks: { cost: { wood: 60, stone: 20 } as Cost, pop: 0, trains: 'spear' as UnitType | null, tier: 1 },
-    range: { cost: { wood: 60 } as Cost, pop: 0, trains: 'archer' as UnitType | null, tier: 2 },
-    workshop: { cost: { wood: 50 } as Cost, pop: 0, trains: 'builder' as UnitType | null, tier: 1 },
-    watchtower: { cost: { wood: 40, stone: 30 } as Cost, pop: 0, trains: null as UnitType | null, tier: 1 },
-  } as Record<RoomType, { cost: Cost; pop: number; trains: UnitType | null; tier: number }>,
+    house: { cost: { wood: 40 } as Cost, pop: 3, trains: ['peasant'] as UnitType[], tier: 1 },
+    barracks: { cost: { wood: 60, stone: 20 } as Cost, pop: 0, trains: ['spear', 'shield'] as UnitType[], tier: 1 },
+    range: { cost: { wood: 60 } as Cost, pop: 0, trains: ['archer'] as UnitType[], tier: 2 },
+    workshop: { cost: { wood: 50 } as Cost, pop: 0, trains: ['builder'] as UnitType[], tier: 1 },
+    watchtower: { cost: { wood: 40, stone: 30 } as Cost, pop: 0, trains: [] as UnitType[], tier: 1 },
+  } as Record<RoomType, { cost: Cost; pop: number; trains: UnitType[]; tier: number }>,
   roomQueueMax: 5,
   watchtowerShot: { dmg: 12, range: 13, cooldown: 1.4 },
   synergy: {

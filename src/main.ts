@@ -54,10 +54,10 @@ class Game implements GameCtl {
     this.queue.push(cmd);
   }
 
-  setMode(m: Mode): void {
+  setMode(m: Mode, keepSelection = false): void {
     this.mode = m;
     this.input.touchGhost = null;
-    if (m.kind !== 'none' && this.sim.state.selected >= 0) this.send({ t: 'selectGroup', group: -1 });
+    if (m.kind !== 'none' && !keepSelection && this.sim.state.selected >= 0) this.send({ t: 'selectGroup', group: -1 });
   }
 
   togglePause(): void {

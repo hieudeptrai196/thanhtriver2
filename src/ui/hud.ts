@@ -1,6 +1,7 @@
 import {
   BALANCE,
   ROOM_TYPES,
+  SOLDIER_TYPES,
   STRUCT_TYPES,
   UNIT_TYPES,
   type AbilityId,
@@ -19,12 +20,13 @@ export type Mode =
   | { kind: 'none' }
   | { kind: 'build'; type: StructType }
   | { kind: 'dismantle' }
-  | { kind: 'skill'; id: AbilityId };
+  | { kind: 'skill'; id: AbilityId }
+  | { kind: 'order'; mode: 'hold' | 'guard' | 'focus' };
 
 export interface GameCtl {
   send(cmd: Command): void;
   mode: Mode;
-  setMode(m: Mode): void;
+  setMode(m: Mode, keepSelection?: boolean): void;
   paused: boolean;
   togglePause(): void;
   auto: boolean;
@@ -51,7 +53,7 @@ export function costText(cost: Cost): string {
   return (Object.keys(cost) as Res[]).map((r) => `${RES_ICON[r]}${cost[r]}`).join(' ');
 }
 
-const UNIT_ICON: Record<string, string> = { peasant: '🌾', builder: '🔨', spear: '🛡', archer: '🏹' };
+const UNIT_ICON: Record<string, string> = { peasant: '🌾', builder: '🔨', spear: '🗡', shield: '🛡', archer: '🏹' };
 const SKILL_ICON: Record<AbilityId, string> = { arrowRain: '🎯', bell: '🔔' };
 
 /** Button label as icon + name + extra; the name hides on small screens. Only touches the DOM when it changes. */
@@ -86,6 +88,10 @@ export class Hud {
   private autoBtn = el('button', 'btn small auto');
   private selectBtn = el('button', 'btn');
   private pickBar = el('div', 'pick-bar');
+  private squadBar = el('div', 'squad-bar');
+  private squadBtns: HTMLButtonElement[] = [];
+  private orderBar = el('div', 'order-bar');
+  private orderBtns = {} as Record<'hold' | 'guard' | 'focus' | 'retreat' | 'formation', HTMLButtonElement>;
   private pickText = el('span', 'pick-text');
   private box = el('div', 'select-box');
   private hint = el('div', 'hint');
@@ -185,7 +191,40 @@ export class Hud {
     const deselect = el('button', 'btn small', `✕ ${t('hud.deselect')}`);
     deselect.onclick = () => ctl.send({ t: 'selectUnits', ids: [] });
     this.pickBar.append(this.pickText, release, deselect);
+    // Squads 1–5 (GDD v1.2 §8.1): tap to select; with units picked, "assign" puts them in a squad.
+    const assign = el('span', 'assign', t('hud.assign'));
+    this.pickBar.append(assign);
+    for (let n = 1; n <= BALANCE.squads.count; n++) {
+      const a = el('button', 'btn tiny', String(n));
+      a.title = t('hud.assignHelp', { n });
+      a.onclick = () => ctl.send({ t: 'assignSquad', ids: this.sim.state.selectedIds, squad: n });
+      this.pickBar.append(a);
+      const b = el('button', 'btn squad');
+      b.onclick = () => ctl.send({ t: 'selectSquad', squad: n });
+      this.squadBtns.push(b);
+      this.squadBar.append(b);
+    }
+    // Tactical orders for soldiers.
+    const ob = (key: keyof typeof this.orderBtns, icon: string, label: string, help: string, fn: () => void) => {
+      const b = el('button', 'btn small');
+      setLabel(b, icon, label);
+      b.title = help;
+      b.onclick = fn;
+      this.orderBtns[key] = b;
+      this.orderBar.append(b);
+    };
+    const pick = (mode: 'hold' | 'guard' | 'focus') => () =>
+      ctl.setMode(ctl.mode.kind === 'order' && ctl.mode.mode === mode ? { kind: 'none' } : { kind: 'order', mode }, true);
+    ob('hold', '✋', t('order.hold'), t('order.help.hold'), pick('hold'));
+    ob('guard', '🛡', t('order.guard'), t('order.help.guard'), pick('guard'));
+    ob('focus', '🎯', t('order.focus'), t('order.help.focus'), pick('focus'));
+    ob('retreat', '↩', t('order.retreat'), t('order.help.retreat'), () => ctl.send({ t: 'order', pos: { x: this.sim.state.castle.x, z: this.sim.state.castle.z }, mode: 'retreat' }));
+    ob('formation', '▤', t('order.line'), t('order.help.formation'), () => ctl.send({ t: 'setFormation', formation: this.sim.state.formation === 'line' ? 'ring' : 'line' }));
     bottom.append(groups, actions);
+    // Bars that float above the bottom bar follow its real height (it wraps on narrow screens).
+    const fit = () => this.root.style.setProperty('--bb', `${bottom.offsetHeight + 12}px`);
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(fit).observe(bottom);
+    requestAnimationFrame(fit);
 
     this.rooms = el('div', 'panel rooms hidden');
     this.build = el('div', 'panel build hidden');
@@ -193,7 +232,7 @@ export class Hud {
     this.dawn = el('div', 'modal dawn hidden');
     this.over = el('div', 'modal over hidden');
     this.pauseBanner.textContent = t('hud.paused');
-    this.root.append(top, this.box, this.pickBar, this.arrows, this.hint, this.toasts, this.pauseBanner, bottom, this.rooms, this.build, this.eco, this.dawn, this.over, this.fps);
+    this.root.append(top, this.box, this.pickBar, this.squadBar, this.orderBar, this.arrows, this.hint, this.toasts, this.pauseBanner, bottom, this.rooms, this.build, this.eco, this.dawn, this.over, this.fps);
   }
 
   private sim!: Sim;
@@ -316,10 +355,26 @@ export class Hud {
       if (this.pickText.textContent !== txt) this.pickText.textContent = txt;
     }
 
+    // Squad strip and the tactical order bar.
+    for (let n = 1; n <= this.squadBtns.length; n++) {
+      const members = s.units.filter((u) => u.squad === n);
+      const b = this.squadBtns[n - 1];
+      setLabel(b, '⚑', t('hud.squad', { n }), String(members.length));
+      b.disabled = members.length === 0;
+      b.classList.toggle('on', members.length > 0 && members.every((u) => s.selectedIds.includes(u.id)));
+    }
+    const soldiersPicked = picked.some((u) => SOLDIER_TYPES.includes(u.type)) || (s.selected >= 0 && SOLDIER_TYPES.includes(UNIT_TYPES[s.selected]));
+    this.orderBar.classList.toggle('show', soldiersPicked);
+    if (soldiersPicked) {
+      const m = this.ctl.mode;
+      for (const k of ['hold', 'guard', 'focus'] as const) this.orderBtns[k].classList.toggle('on', m.kind === 'order' && m.mode === k);
+      setLabel(this.orderBtns.formation, s.formation === 'line' ? '▤' : '◎', t(s.formation === 'line' ? 'order.line' : 'order.ring'));
+    }
+
     const counts = groupCounts(s);
     UNIT_TYPES.forEach((type, i) => {
       const b = this.groupBtns[i];
-      setLabel(b, UNIT_ICON[type], `${i + 1} · ${t(`unit.${type}` as MessageKey)}`, String(counts[type]));
+      setLabel(b, UNIT_ICON[type], t(`unit.${type}` as MessageKey), String(counts[type]));
       b.classList.toggle('on', s.selected === i);
     });
     for (const id of SKILLS) {
@@ -344,6 +399,7 @@ export class Hud {
     else if (m.kind === 'build') hint = t('hud.buildMode', { struct: m.type });
     else if (m.kind === 'dismantle') hint = t('hud.dismantleMode');
     else if (m.kind === 'skill') hint = t('hud.targetSkill', { skill: m.id });
+    else if (m.kind === 'order') hint = t(`order.help.${m.mode}` as MessageKey);
     else if (c.moving) hint = t('hud.moving', { s: Math.ceil(Math.abs(c.destX - c.x) / (BALANCE.castle.moveSpeed * s.mods.moveSpeed)) });
     else if (canRun) hint = t('hud.toDest');
     else if (c.fire > 0) hint = t('hud.fire');
@@ -432,14 +488,16 @@ export class Hud {
           if (syn[i]) cell.classList.add('syn');
           cell.append(el('div', 'room-name', t(`room.${room.type}` as MessageKey)));
           const trains = BALANCE.rooms[room.type].trains;
-          if (trains) {
-            const b = el('button', 'btn tiny', `${t('room.train', { unit: trains })} ${costText(BALANCE.units[trains].cost)}`);
-            b.disabled = !canAfford(s, BALANCE.units[trains].cost) || popUsed(s) >= popCap(s) || room.queue.length >= BALANCE.roomQueueMax;
-            b.onclick = (ev) => {
-              ev.stopPropagation();
-              this.ctl.send({ t: 'queueUnit', slot: i });
-            };
-            cell.append(b);
+          if (trains.length) {
+            for (const type of trains) {
+              const b = el('button', 'btn tiny', `${UNIT_ICON[type]} ${t('room.train', { unit: type })} ${costText(BALANCE.units[type].cost)}`);
+              b.disabled = !canAfford(s, BALANCE.units[type].cost) || popUsed(s) >= popCap(s) || room.queue.length >= BALANCE.roomQueueMax;
+              b.onclick = (ev) => {
+                ev.stopPropagation();
+                this.ctl.send({ t: 'queueUnit', slot: i, type });
+              };
+              cell.append(b);
+            }
             const q = el('div', 'room-queue', room.queue.length ? t('room.queue', { n: room.queue.length }) : '');
             const prog = el('div', 'room-prog');
             const fill = el('div', 'room-prog-fill');
