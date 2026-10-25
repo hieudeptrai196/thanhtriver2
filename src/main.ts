@@ -1,6 +1,6 @@
 import './style.css';
 import { Audio } from './audio/audio';
-import { getLang, initLang, setLang, t } from './i18n';
+import { getLang, initLang, setLang, t, type MessageKey } from './i18n';
 import { Input } from './input/input';
 import { GameRenderer } from './render/renderer';
 import { botCommands } from './sim/bot';
@@ -14,8 +14,8 @@ const params = new URLSearchParams(location.search);
 const showFps = params.get('fps') === '1';
 // ?shadows=0 turns sun shadows off from the start.
 const noShadows = params.get('shadows') === '0';
-// Debug: ?speed=4 runs the simulation faster.
-const speed = Math.max(1, Math.min(16, Number(params.get('speed') ?? 1) || 1));
+// Debug: ?speed=4 runs the simulation faster (the in-game button switches x1/x2 on top of it).
+const debugSpeed = Math.max(1, Math.min(16, Number(params.get('speed') ?? 1) || 1));
 const app = document.getElementById('app')!;
 const canvas = document.getElementById('scene') as HTMLCanvasElement;
 const renderer = new GameRenderer(canvas);
@@ -35,6 +35,7 @@ class Game implements GameCtl {
   mode: Mode = { kind: 'none' };
   paused = false;
   auto = false;
+  speed = 1;
   selectMode = false;
   private autoDawn = 0;
   gameOverInfo: { best: boolean } | null = null;
@@ -64,6 +65,10 @@ class Game implements GameCtl {
     this.paused = !this.paused;
   }
 
+  toggleSpeed(): void {
+    this.speed = this.speed === 1 ? 2 : 1;
+  }
+
   toggleSelectMode(): void {
     this.selectMode = !this.selectMode;
     if (this.selectMode) this.setMode({ kind: 'none' });
@@ -82,7 +87,7 @@ class Game implements GameCtl {
 
   restart(): void {
     this.destroy();
-    startGame(Sim.create(newSeed()));
+    startGame(Sim.create(newSeed(), this.sim.state.mode));
   }
 
   destroy(): void {
@@ -102,13 +107,14 @@ class Game implements GameCtl {
     }
     // Auto: the built-in commander plays. Dawn choices wait a moment so the screen can be read.
     if (this.auto && !this.paused && sim.state.phase === 'dawn') {
-      this.autoDawn += dt * speed;
+      this.autoDawn += dt * debugSpeed * this.speed;
       if (this.autoDawn > 2.5) {
         sim.apply(botCommands(sim));
         this.autoDawn = 0;
       }
     }
     if (!this.paused && !this.hud.modalOpen) {
+      const speed = debugSpeed * this.speed;
       this.acc += dt * speed;
       const maxSteps = 8 * speed;
       let steps = 0;
@@ -127,10 +133,10 @@ class Game implements GameCtl {
       audio.play(events);
       for (const e of events) {
         if (e.key === 'msg.dawn') writeSave(sim.save());
-        if (e.key === 'msg.gameOver') {
+        if (e.key === 'msg.gameOver' || e.key === 'msg.victory') {
           clearSave();
           const s = sim.state;
-          const best = addScore({ nights: s.stats.nightsSurvived, kills: s.stats.kills, bosses: s.stats.bosses, score: score(s), date: Date.now() });
+          const best = addScore({ nights: s.stats.nightsSurvived, kills: s.stats.kills, bosses: s.stats.bosses, score: score(s), date: Date.now(), mode: s.mode, won: s.phase === 'victory' });
           this.gameOverInfo = { best };
         }
       }
@@ -166,7 +172,7 @@ function startGame(sim: Sim): void {
 // Buttons must not keep focus, or Space would also "click" the last pressed button.
 document.addEventListener('click', (e) => (e.target as HTMLElement | null)?.closest('button')?.blur(), true);
 
-function showMenu(view: 'main' | 'scores' | 'help' | 'credits' = 'main'): void {
+function showMenu(view: 'main' | 'scores' | 'help' | 'credits' | 'mode' = 'main'): void {
   menuEl?.remove();
   menuEl = el('div', 'menu');
   const box = el('div', 'menu-box');
@@ -193,7 +199,7 @@ function showMenu(view: 'main' | 'scores' | 'help' | 'credits' = 'main'): void {
         }
       });
     }
-    btn(t('menu.new'), () => startGame(Sim.create(newSeed())), save ? 'btn' : 'btn big');
+    btn(t('menu.new'), () => showMenu('mode'), save ? 'btn' : 'btn big');
     btn(t('menu.scores'), () => showMenu('scores'), 'btn');
     btn(t('menu.help'), () => showMenu('help'), 'btn');
     btn(t('menu.credits'), () => showMenu('credits'), 'btn');
@@ -214,11 +220,27 @@ function showMenu(view: 'main' | 'scores' | 'help' | 'credits' = 'main'): void {
     const rows = loadScores();
     const list = el('ol', 'scores');
     if (rows.length === 0) box.append(el('p', '', t('menu.noScores')));
-    for (const r of rows) list.append(el('li', '', t('menu.scoreRow', { nights: r.nights, kills: r.kills, score: r.score })));
+    for (const r of rows) {
+      const mode = r.mode ? ` · ${t(`mode.${r.mode}` as MessageKey)}` : '';
+      list.append(el('li', '', `${t('menu.scoreRow', { nights: r.nights, kills: r.kills, score: r.score })}${mode}${r.won ? ' 🏆' : ''}`));
+    }
+    box.append(list);
+  } else if (view === 'mode') {
+    // Game modes (GDD v1.2 §14).
+    const list = el('div', 'menu-list');
+    for (const mode of ['journey', 'short', 'endless'] as const) {
+      const b = el('button', mode === 'journey' ? 'btn big pick' : 'btn pick');
+      b.append(el('b', '', t(`mode.${mode}` as MessageKey)), el('small', '', t(`mode.desc.${mode}` as MessageKey)));
+      b.onclick = () => {
+        audio.unlock();
+        startGame(Sim.create(newSeed(), mode));
+      };
+      list.append(b);
+    }
     box.append(list);
   } else if (view === 'help') {
     const list = el('div', 'help');
-    for (let i = 1; i <= 7; i++) list.append(el('p', '', t(`help.${i}`)));
+    for (let i = 1; i <= 8; i++) list.append(el('p', '', t(`help.${i}`)));
     box.append(list);
   } else {
     const list = el('div', 'help');

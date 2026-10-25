@@ -7,12 +7,15 @@ export type UnitType = 'peasant' | 'builder' | 'spear' | 'shield' | 'archer';
 export type DamageType = 'physical' | 'piercing' | 'siege';
 export type Formation = 'line' | 'ring';
 export type MonsterType = 'fast' | 'brute' | 'ranged' | 'boss';
-export type RoomType = 'house' | 'barracks' | 'range' | 'workshop' | 'watchtower';
+export type RoomType = 'house' | 'barracks' | 'range' | 'workshop' | 'watchtower' | 'storage' | 'kitchen';
 export type StructType = 'wall' | 'tower' | 'torch';
 export type NodeType = 'tree' | 'rock' | 'bush';
 export type TerrainType = 'plains' | 'forest' | 'canyon';
 export type Dir = 'N' | 'E' | 'S' | 'W';
-export type AbilityId = 'arrowRain' | 'bell';
+export type AbilityId = 'arrowRain' | 'bell' | 'seal' | 'reserve' | 'patch';
+export type Doctrine = 'fortress' | 'caravan';
+export type GameMode = 'journey' | 'short' | 'endless';
+// GDD v1.2 §13.2: every card changes a decision and carries a cost.
 export type CardId =
   | 'soldierHp'
   | 'towerRate'
@@ -20,10 +23,14 @@ export type CardId =
   | 'carry'
   | 'torchRadius'
   | 'wallHp'
-  | 'repairSpeed'
+  | 'quickSalvage'
   | 'extraSlot'
   | 'archerDmg'
-  | 'coreHeal';
+  | 'coreHeal'
+  | 'reserve'
+  | 'chokeHold'
+  | 'lightPack'
+  | 'fieldRepair';
 
 export const UNIT_TYPES: UnitType[] = ['peasant', 'builder', 'spear', 'shield', 'archer'];
 export const SOLDIER_TYPES: UnitType[] = ['spear', 'shield', 'archer'];
@@ -172,7 +179,37 @@ export const BALANCE = {
     range: { cost: { wood: 60 } as Cost, pop: 0, trains: ['archer'] as UnitType[], tier: 2 },
     workshop: { cost: { wood: 50 } as Cost, pop: 0, trains: ['builder'] as UnitType[], tier: 1 },
     watchtower: { cost: { wood: 40, stone: 30 } as Cost, pop: 0, trains: [] as UnitType[], tier: 1 },
+    storage: { cost: { wood: 50 } as Cost, pop: 0, trains: [] as UnitType[], tier: 1 },
+    kitchen: { cost: { wood: 40 } as Cost, pop: 0, trains: [] as UnitType[], tier: 1 },
   } as Record<RoomType, { cost: Cost; pop: number; trains: UnitType[]; tier: number }>,
+  // Castle load (GDD v1.2 §5.2): rooms and stock make the castle heavy; heavy is slow, overloaded cannot leave.
+  load: {
+    base: 20,
+    tier2: 10,
+    room: { house: 4, barracks: 6, range: 5, workshop: 5, watchtower: 6, storage: 2, kitchen: 4 } as Record<RoomType, number>,
+    stockPerLoad: 60, // wood + stone + food per point of load
+    capacity: 70,
+    storageCapacity: 25, // per Storage room
+    heavyAt: 1.0,
+    veryHeavyAt: 1.25,
+    overloadAt: 1.5,
+    heavySpeed: 0.75,
+    veryHeavySpeed: 0.5,
+    dumpShare: 0.25, // "drop cargo" throws away this share of the heaviest stock
+  },
+  storage: { base: 300, perRoom: 250 }, // cap per resource (gold uncapped)
+  kitchen: { foodSaving: 0.25, houseTrainBoost: 0.3 },
+  storageWorkshopDiscount: 0.15,
+  doctrine: {
+    offerAfterNight: 2,
+    fortress: { structHp: 0.4, towerDmg: 0.25, wallMax: 0.2, load: 0.25, speed: -0.15, refund: 0.5 },
+    caravan: { structHp: -0.25, towerDmg: -0.15, wallMax: -0.1, loadCap: 0.4, speed: 0.25, refund: 2, dismantle: 2 },
+  },
+  modes: { journey: 12, short: 6, endless: 0 } as Record<GameMode, number>,
+  victoryBonus: 1000,
+  seal: { wall: 0.35, damageCut: 0.5, seconds: 20, structCost: 0.4 },
+  reserve: { count: 3, foodAtDawn: 15 },
+  patch: { wood: 40, wall: 0.25, wheel: 0.5 },
   roomQueueMax: 5,
   watchtowerShot: { dmg: 12, range: 13, cooldown: 1.4 },
   synergy: {
@@ -187,13 +224,14 @@ export const BALANCE = {
     torch: { cost: { wood: 8 } as Cost, hp: 40, work: 2, blocks: false, light: 7 },
   } as Record<StructType, { cost: Cost; hp: number; work: number; blocks: boolean; light: number; dmg?: number; range?: number; cooldown?: number }>,
   refundShare: 0.3,
-  repairWoodPerHp: 0.08, // repairs cost wood; no wood, no repairs
+  repairWoodPerHp: 0.05, // repairs cost wood; no wood, no repairs
   emergencyWall: 0.35, // builders drop everything to patch the castle wall below this share
   economy: {
     laborDefault: { food: 2, wood: 2, stone: 1 } as Record<'food' | 'wood' | 'stone', number>,
     dropTtl: 120, // seconds a dropped load stays on the ground
     incomeWindow: 60, // seconds averaged for the income readout
     hungryFoodWeight: 2, // food priority doubles when fewer than two dawns are covered
+    stockTarget: 250, // stock level at which a resource stops pulling extra workers
   },
   dismantleWork: 2,
   wallPathCost: 9, // flow-field cost for walking through a wall (monsters smash it)
@@ -201,19 +239,27 @@ export const BALANCE = {
   abilities: {
     arrowRain: { cooldown: 60, radius: 6, dmg: 70, tier: 1 },
     bell: { cooldown: 90, heal: 0.2, tier: 1 },
+    seal: { cooldown: 0, tier: 1 }, // once per night, reset at dawn
+    reserve: { cooldown: 0, tier: 1 }, // once per night, from the Reserve card
+    patch: { cooldown: 90, tier: 1 }, // from the Field repair card
   } as Record<AbilityId, { cooldown: number; radius?: number; dmg?: number; heal?: number; tier: number }>,
 
+  // Value of each card; the drawback of each is coded next to it in sim.pickCard.
   cards: {
     soldierHp: 0.2,
     towerRate: 0.25,
-    moveSpeed: 2,
+    moveSpeed: 1.5,
     carry: 0.5,
-    torchRadius: 0.3,
+    torchRadius: 0.5,
     wallHp: 0.3,
-    repairSpeed: 2,
+    quickSalvage: 3,
     extraSlot: 1,
     archerDmg: 0.25,
     coreHeal: 0.4,
+    reserve: 1,
+    chokeHold: 0.3,
+    lightPack: 0.4,
+    fieldRepair: 1,
   } as Record<CardId, number>,
 
   warnings: { coreLow: 0.3, wallLow: 0.25 },

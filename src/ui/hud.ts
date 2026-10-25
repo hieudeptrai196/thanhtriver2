@@ -13,7 +13,7 @@ import {
 } from '../data/balance';
 import { t, type MessageKey } from '../i18n';
 import type { GameRenderer } from '../render/renderer';
-import { canAfford, foodDawns, groupCounts, incomePerMin, popCap, popUsed, resourcePctOf, score, slotCount, synergySlots, SLOT_POS, type Sim } from '../sim/sim';
+import { canAfford, castleLoad, foodDawns, loadCapacity, loadLevel, storageCap, structCost, unitCost, groupCounts, incomePerMin, popCap, popUsed, resourcePctOf, score, slotCount, synergySlots, SLOT_POS, type Sim } from '../sim/sim';
 import type { Command, GameEvent, LaborRes } from '../sim/types';
 
 export type Mode =
@@ -36,11 +36,13 @@ export interface GameCtl {
   toMenu(): void;
   restart(): void;
   gameOverInfo: { best: boolean } | null;
+  speed: number;
+  toggleSpeed(): void;
 }
 
 const RES_ICON: Record<Res, string> = { wood: '🪵', stone: '🪨', food: '🍖', gold: '🪙' };
-const SKILLS: AbilityId[] = ['arrowRain', 'bell'];
-const SKILL_KEY: Record<AbilityId, string> = { arrowRain: 'Q', bell: 'E' };
+const SKILLS: AbilityId[] = ['arrowRain', 'bell', 'seal', 'reserve', 'patch'];
+const SKILL_KEY: Record<AbilityId, string> = { arrowRain: 'Q', bell: 'E', seal: 'Z', reserve: 'X', patch: 'V' };
 
 export function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -54,7 +56,7 @@ export function costText(cost: Cost): string {
 }
 
 const UNIT_ICON: Record<string, string> = { peasant: '🌾', builder: '🔨', spear: '🗡', shield: '🛡', archer: '🏹' };
-const SKILL_ICON: Record<AbilityId, string> = { arrowRain: '🎯', bell: '🔔' };
+const SKILL_ICON: Record<AbilityId, string> = { arrowRain: '🎯', bell: '🔔', seal: '🚪', reserve: '🪖', patch: '🔧' };
 
 /** Button label as icon + name + extra; the name hides on small screens. Only touches the DOM when it changes. */
 function setLabel(b: HTMLElement, icon: string, name: string, extra = ''): void {
@@ -62,6 +64,7 @@ function setLabel(b: HTMLElement, icon: string, name: string, extra = ''): void 
   if (b.dataset.label === key) return;
   b.dataset.label = key;
   b.replaceChildren(el('span', 'ic', icon), el('span', 'nm', name), ...(extra ? [el('span', 'ex', extra)] : []));
+  if (!b.dataset.tip) b.title = name;
 }
 
 function fmtTime(sec: number): string {
@@ -86,6 +89,9 @@ export class Hud {
   private runBtn = el('button', 'btn run big');
   private pauseBtn = el('button', 'btn small');
   private autoBtn = el('button', 'btn small auto');
+  private speedBtn = el('button', 'btn small');
+  private loadEl = el('div', 'tb-load');
+  private dumpBtn = el('button', 'btn small dump');
   private selectBtn = el('button', 'btn');
   private pickBar = el('div', 'pick-bar');
   private squadBar = el('div', 'squad-bar');
@@ -141,13 +147,15 @@ export class Hud {
     coreWrap.append(this.coreBar, this.coreTxt);
     const wallWrap = el('div', 'bar');
     wallWrap.append(this.wallBar, this.wallTxt);
-    bars.append(coreWrap, wallWrap, this.wheelEl);
+    bars.append(coreWrap, wallWrap, this.wheelEl, this.loadEl);
     const menuBtn = el('button', 'btn small', '☰');
     menuBtn.title = t('hud.menu');
     menuBtn.onclick = () => ctl.toMenu();
     this.pauseBtn.onclick = () => ctl.togglePause();
     this.autoBtn.onclick = () => ctl.toggleAuto();
-    top.append(left, res, bars, this.autoBtn, this.pauseBtn, menuBtn);
+    this.speedBtn.onclick = () => ctl.toggleSpeed();
+    this.speedBtn.title = t('hud.speedHelp');
+    top.append(left, res, bars, this.speedBtn, this.autoBtn, this.pauseBtn, menuBtn);
 
     // Bottom bar.
     const bottom = el('div', 'bottombar');
@@ -180,6 +188,9 @@ export class Hud {
     setLabel(recallBtn, '📯', t('hud.recall'));
     recallBtn.onclick = () => ctl.send({ t: 'orderAll', kind: 'home' });
     this.runBtn.onclick = () => ctl.send({ t: 'toggleMove' });
+    setLabel(this.dumpBtn, '📤', t('hud.dump'));
+    this.dumpBtn.title = t('hud.dumpHelp');
+    this.dumpBtn.onclick = () => ctl.send({ t: 'dumpCargo' });
     setLabel(this.selectBtn, '⬚', t('hud.selectMode'));
     this.selectBtn.title = t('hud.selectModeHelp');
     this.selectBtn.onclick = () => ctl.toggleSelectMode();
@@ -187,7 +198,7 @@ export class Hud {
     setLabel(ecoBtn, '📦', t('hud.economy'));
     ecoBtn.title = t('eco.help');
     ecoBtn.onclick = () => this.toggleEco();
-    actions.append(this.selectBtn, ecoBtn, buildBtn, roomsBtn, recallBtn, this.runBtn);
+    actions.append(this.selectBtn, ecoBtn, buildBtn, roomsBtn, recallBtn, this.dumpBtn, this.runBtn);
     const release = el('button', 'btn small', `↺ ${t('hud.release')}`);
     release.onclick = () => ctl.send({ t: 'releaseUnits' });
     const deselect = el('button', 'btn small', `✕ ${t('hud.deselect')}`);
@@ -245,6 +256,7 @@ export class Hud {
   useSkill(id: AbilityId): void {
     const s = this.sim.state;
     if (s.cooldowns[id] > 0 || s.phase === 'dawn') return;
+    if (!s.unlocked.includes(id)) return;
     if (id === 'arrowRain') this.ctl.setMode(this.ctl.mode.kind === 'skill' ? { kind: 'none' } : { kind: 'skill', id });
     else this.ctl.send({ t: 'ability', id });
   }
@@ -340,6 +352,16 @@ export class Hud {
     const wheelBroken = c.wheelHp <= 0;
     this.wheelEl.textContent = wheelBroken ? `⚠ ${t('hud.wheelBroken')}` : `⚙ ${Math.round((c.wheelHp / c.wheelMax) * 100)}%`;
     this.wheelEl.classList.toggle('bad', wheelBroken);
+    // Castle load (GDD v1.2 §5.2): light / heavy / very heavy / overloaded.
+    const lv = loadLevel(s);
+    const loadTxt = `⚖ ${t(`load.${lv}` as MessageKey)}`;
+    if (this.loadEl.textContent !== loadTxt) this.loadEl.textContent = loadTxt;
+    this.loadEl.className = `tb-load ${lv}`;
+    this.loadEl.title = t('load.help', { load: Math.round(castleLoad(s)), cap: Math.round(loadCapacity(s)), store: storageCap(s) });
+    this.dumpBtn.style.display = lv === 'overloaded' && s.phase === 'day' ? '' : 'none';
+    const spd = `x${this.ctl.speed}`;
+    if (this.speedBtn.textContent !== spd) this.speedBtn.textContent = spd;
+    this.speedBtn.classList.toggle('on', this.ctl.speed > 1);
     this.pauseBtn.textContent = this.ctl.paused ? '▶' : '⏸';
     this.pauseBtn.title = this.ctl.paused ? t('hud.resume') : t('hud.pause');
     this.pauseBanner.classList.toggle('show', this.ctl.paused);
@@ -361,7 +383,7 @@ export class Hud {
     for (let n = 1; n <= this.squadBtns.length; n++) {
       const members = s.units.filter((u) => u.squad === n);
       const b = this.squadBtns[n - 1];
-      setLabel(b, '⚑', t('hud.squad', { n }), String(members.length));
+      setLabel(b, `⚑${n}`, t('hud.squad', { n }), String(members.length));
       b.disabled = members.length === 0;
       b.classList.toggle('on', members.length > 0 && members.every((u) => s.selectedIds.includes(u.id)));
     }
@@ -381,12 +403,16 @@ export class Hud {
     });
     for (const id of SKILLS) {
       const b = this.skillBtns[id];
-      const cd = s.cooldowns[id];
+      b.style.display = s.unlocked.includes(id) ? '' : 'none';
+      const cd = s.cooldowns[id] > 1e5 ? 0 : s.cooldowns[id];
+      const usedTonight = s.cooldowns[id] > 1e5;
       const locked = BALANCE.abilities[id].tier > c.tier;
-      setLabel(b, SKILL_ICON[id], `${SKILL_KEY[id]} · ${t(`skill.${id}` as MessageKey)}`, cd > 0 ? `${Math.ceil(cd)}s` : '');
-      b.disabled = cd > 0 || locked || s.phase === 'dawn';
+      setLabel(b, SKILL_ICON[id], `${SKILL_KEY[id]} · ${t(`skill.${id}` as MessageKey)}`, usedTonight ? '✓' : cd > 0 ? `${Math.ceil(cd)}s` : '');
+      b.title = t(`skill.desc.${id}` as MessageKey);
+      const nightOnly = id === 'seal' || id === 'reserve';
+      b.disabled = cd > 0 || usedTonight || locked || s.phase === 'dawn' || (nightOnly && s.phase !== 'dusk' && s.phase !== 'night');
       b.classList.toggle('on', this.ctl.mode.kind === 'skill' && this.ctl.mode.id === id);
-      b.style.setProperty('--cd', `${cd > 0 ? (cd / BALANCE.abilities[id].cooldown) * 100 : 0}%`);
+      b.style.setProperty('--cd', `${cd > 0 ? (cd / Math.max(1, BALANCE.abilities[id].cooldown)) * 100 : 0}%`);
     }
     const canRun = s.phase === 'day' && Math.abs(c.destX - c.x) > 0.5 && !wheelBroken;
     const runTxt = c.moving ? `■ ${t('hud.stop')}` : `▶ ${t('hud.run')}`;
@@ -514,8 +540,9 @@ export class Hud {
           const trains = BALANCE.rooms[room.type].trains;
           if (trains.length) {
             for (const type of trains) {
-              const b = el('button', 'btn tiny', `${UNIT_ICON[type]} ${t('room.train', { unit: type })} ${costText(BALANCE.units[type].cost)}`);
-              b.disabled = !canAfford(s, BALANCE.units[type].cost) || popUsed(s) >= popCap(s) || room.queue.length >= BALANCE.roomQueueMax;
+              const cost = unitCost(s, type);
+              const b = el('button', 'btn tiny', `${UNIT_ICON[type]} ${t('room.train', { unit: type })} ${costText(cost)}`);
+              b.disabled = !canAfford(s, cost) || popUsed(s) >= popCap(s) || room.queue.length >= BALANCE.roomQueueMax;
               b.onclick = (ev) => {
                 ev.stopPropagation();
                 this.ctl.send({ t: 'queueUnit', slot: i, type });
@@ -632,10 +659,10 @@ export class Hud {
     }
     const list = el('div', 'build-list');
     for (const type of STRUCT_TYPES) {
-      const def = BALANCE.structs[type];
+      const cost = structCost(s, type);
       const b = el('button', 'btn pick');
-      b.append(el('b', '', t(`struct.${type}` as MessageKey)), el('span', 'cost', costText(def.cost)), el('small', '', t(`struct.desc.${type}` as MessageKey)));
-      b.disabled = !canAfford(s, def.cost);
+      b.append(el('b', '', t(`struct.${type}` as MessageKey)), el('span', 'cost', costText(cost)), el('small', '', t(`struct.desc.${type}` as MessageKey)));
+      b.disabled = !canAfford(s, cost);
       b.classList.toggle('on', this.ctl.mode.kind === 'build' && this.ctl.mode.type === type);
       b.onclick = () => this.ctl.setMode(this.ctl.mode.kind === 'build' && this.ctl.mode.type === type ? { kind: 'none' } : { kind: 'build', type });
       list.append(b);
@@ -655,7 +682,7 @@ export class Hud {
       this.dawnSig = '';
       return;
     }
-    const sig = `${s.night}:${s.cardPicked}:${s.routePicked}`;
+    const sig = `${s.night}:${s.cardPicked}:${s.routePicked}:${s.doctrineOffer}`;
     if (sig === this.dawnSig) return;
     this.dawnSig = sig;
     this.closePanels();
@@ -677,7 +704,17 @@ export class Hud {
     box.append(sum);
     if (st.hungry) box.append(el('div', 'warn', t('dawn.hungry')));
     box.append(this.recap(s));
-    if (!s.cardPicked) {
+    if (s.doctrineOffer) {
+      box.append(el('h3', '', t('dawn.pickDoctrine')));
+      const row = el('div', 'cards');
+      for (const d of ['fortress', 'caravan'] as const) {
+        const b = el('button', 'card');
+        b.append(el('b', '', t(`doctrine.${d}` as MessageKey)), el('div', 'good', t(`doctrine.gain.${d}` as MessageKey)), el('small', 'bad', t(`doctrine.cost.${d}` as MessageKey)));
+        b.onclick = () => !fresh() && this.ctl.send({ t: 'pickDoctrine', doctrine: d });
+        row.append(b);
+      }
+      box.append(row);
+    } else if (!s.cardPicked) {
       box.append(el('h3', '', t('dawn.pickCard')));
       const row = el('div', 'cards');
       for (const id of s.cards) {
@@ -700,7 +737,7 @@ export class Hud {
         b.append(el('div', r.id === 0 ? 'bad' : '', t('dawn.dirs', { n: r.dirs })));
         const danger = el('div', 'danger', `${t('dawn.danger')} ${'●'.repeat(r.danger)}${'○'.repeat(5 - r.danger)}`);
         b.append(danger);
-        if (r.id > 0) b.append(el('div', '', t('dawn.travel', { s: r.travel })));
+        if (r.id > 0) b.append(el('div', loadLevel(s) === 'overloaded' ? 'bad' : '', loadLevel(s) === 'overloaded' ? t('dawn.overloaded') : t('dawn.travel', { s: r.travel })));
         b.append(el('small', r.id === 0 ? 'good' : 'bad', r.id === 0 ? t('dawn.keep') : t('dawn.leave')));
         b.onclick = () => !fresh() && this.ctl.send({ t: 'pickRoute', id: r.id });
         row.append(b);
@@ -739,7 +776,7 @@ export class Hud {
 
   private renderOver(sim: Sim): void {
     const s = sim.state;
-    if (s.phase !== 'gameover') {
+    if (s.phase !== 'gameover' && s.phase !== 'victory') {
       this.overShown = false;
       this.over.classList.add('hidden');
       return;
@@ -750,7 +787,9 @@ export class Hud {
     this.over.classList.remove('hidden');
     this.over.replaceChildren();
     const box = el('div', 'modal-box');
-    box.append(el('h2', '', t('over.title')));
+    const won = s.phase === 'victory';
+    box.append(el('h2', won ? 'good' : '', t(won ? 'over.victory' : 'over.title')));
+    if (won) box.append(el('div', '', t('over.victoryText', { n: s.stats.nightsSurvived })));
     box.append(
       el('div', 'big-stat', t('over.nights', { n: s.stats.nightsSurvived })),
       el('div', '', t('over.kills', { n: s.stats.kills })),

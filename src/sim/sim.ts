@@ -8,6 +8,8 @@ import {
   type Cost,
   type DamageType,
   type Dir,
+  type Doctrine,
+  type GameMode,
   type MonsterType,
   type Res,
   type RoomType,
@@ -70,7 +72,36 @@ interface Light {
   r: number;
 }
 
-export function createState(seed: number): GameState {
+export function defaultMods(): GameState['mods'] {
+  return {
+    soldierHp: 0,
+    towerRate: 0,
+    moveSpeed: 1,
+    carry: 0,
+    torchRadius: 0,
+    wallHp: 0,
+    repairSpeed: 1,
+    extraSlots: 0,
+    archerDmg: 0,
+    soldierFood: 0,
+    towerCost: 0,
+    wheelMax: 1,
+    peasantSpeed: 1,
+    torchCost: 0,
+    torchConfirm: 0,
+    castleLoad: 0,
+    dismantleSpeed: 1,
+    refundBonus: 0,
+    archerCost: 0,
+    holdArmor: 0,
+    retreatSpeed: 1,
+    loadCap: 0,
+    storageCap: 0,
+    repairCost: 1,
+  };
+}
+
+export function createState(seed: number, mode: GameMode = 'endless'): GameState {
   const s: GameState = {
     version: SAVE_VERSION,
     seed: seed >>> 0,
@@ -110,18 +141,8 @@ export function createState(seed: number): GameState {
     selected: -1,
     selectedIds: [],
     groupOrders: { peasant: null, builder: null, spear: null, shield: null, archer: null },
-    cooldowns: { arrowRain: 0, bell: 0 },
-    mods: {
-      soldierHp: 0,
-      towerRate: 0,
-      moveSpeed: 1,
-      carry: 0,
-      torchRadius: 0,
-      wallHp: 0,
-      repairSpeed: 1,
-      extraSlots: 0,
-      archerDmg: 0,
-    },
+    cooldowns: { arrowRain: 0, bell: 0, seal: 0, reserve: 0, patch: 0 },
+    mods: defaultMods(),
     cards: [],
     cardPicked: false,
     routes: [],
@@ -139,6 +160,14 @@ export function createState(seed: number): GameState {
     deliveries: [],
     repairDebt: 0,
     formation: 'line',
+    mode,
+    goalNights: BALANCE.modes[mode],
+    doctrine: null,
+    doctrineOffer: false,
+    unlocked: ['arrowRain', 'bell', 'seal'],
+    sealTimer: 0,
+    sealed: false,
+    reserveIds: [],
     fireDone: false,
     newRegion: false,
   };
@@ -214,6 +243,8 @@ export function synergySlots(s: GameState): boolean[] {
   const pairs: [RoomType, RoomType][] = [
     ['barracks', 'workshop'],
     ['watchtower', 'range'],
+    ['kitchen', 'house'],
+    ['storage', 'workshop'],
   ];
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
@@ -288,7 +319,7 @@ function refund(s: GameState, cost: Cost, share: number): void {
 
 export function score(s: GameState): number {
   const sc = BALANCE.score;
-  return s.stats.nightsSurvived * sc.perNight + s.stats.kills * sc.perKill + s.stats.bosses * sc.perBoss;
+  return s.stats.nightsSurvived * sc.perNight + s.stats.kills * sc.perKill + s.stats.bosses * sc.perBoss + (s.phase === 'victory' ? BALANCE.victoryBonus : 0);
 }
 
 /** Distance from a point to the castle's square footprint. */
@@ -330,6 +361,83 @@ export function emptyNightStats(): GameState['nightStats'] {
   return { kills: 0, lost: 0, gold: 0, food: 0, hungry: false, structLost: 0, wallDamage: 0, coreDamage: 0, cause: '', lostByType: {} };
 }
 
+// ---------------------------------------------------------------- load, storage, costs (GDD v1.2 §5.2, §6.6)
+
+export function castleLoad(s: GameState): number {
+  const L = BALANCE.load;
+  let load = L.base + (s.castle.tier >= 2 ? L.tier2 : 0) + s.mods.castleLoad;
+  for (let i = 0; i < slotCount(s); i++) {
+    const r = s.rooms[i];
+    if (r) load += L.room[r.type];
+  }
+  load += (s.res.wood + s.res.stone + s.res.food) / L.stockPerLoad;
+  if (s.doctrine === 'fortress') load *= 1 + BALANCE.doctrine.fortress.load;
+  return load;
+}
+
+export function loadCapacity(s: GameState): number {
+  const L = BALANCE.load;
+  let cap = L.capacity + countRooms(s, 'storage') * L.storageCapacity;
+  cap *= 1 + s.mods.loadCap + (s.doctrine === 'caravan' ? BALANCE.doctrine.caravan.loadCap : 0);
+  return cap;
+}
+
+export type LoadLevel = 'light' | 'heavy' | 'veryHeavy' | 'overloaded';
+
+export function loadLevel(s: GameState): LoadLevel {
+  const L = BALANCE.load;
+  const r = castleLoad(s) / loadCapacity(s);
+  return r <= L.heavyAt ? 'light' : r <= L.veryHeavyAt ? 'heavy' : r <= L.overloadAt ? 'veryHeavy' : 'overloaded';
+}
+
+/** Castle travel speed in units per second, after cards, doctrine and load. */
+export function travelSpeed(s: GameState): number {
+  const L = BALANCE.load;
+  const lv = loadLevel(s);
+  const loadMult = lv === 'light' ? 1 : lv === 'heavy' ? L.heavySpeed : L.veryHeavySpeed;
+  const doc = s.doctrine ? BALANCE.doctrine[s.doctrine].speed : 0;
+  return C.moveSpeed * s.mods.moveSpeed * (1 + doc) * loadMult;
+}
+
+export function storageCap(s: GameState): number {
+  return Math.round((BALANCE.storage.base + countRooms(s, 'storage') * BALANCE.storage.perRoom) * (1 + s.mods.storageCap));
+}
+
+/** Food eaten each dawn: one per villager, a Kitchen saves a quarter. */
+export function foodNeed(s: GameState): number {
+  const mult = countRooms(s, 'kitchen') > 0 ? 1 - BALANCE.kitchen.foodSaving : 1;
+  return Math.ceil(s.units.filter((u) => !s.reserveIds.includes(u.id)).length * BALANCE.foodPerUnit * mult);
+}
+
+export function unitCost(s: GameState, type: UnitType): Cost {
+  const c: Cost = { ...U[type].cost };
+  if (SOLDIER_TYPES.includes(type)) c.food = (c.food ?? 0) + s.mods.soldierFood;
+  if (type === 'archer') c.wood = (c.wood ?? 0) + s.mods.archerCost;
+  return c;
+}
+
+export function structCost(s: GameState, type: StructType): Cost {
+  const c: Cost = { ...BALANCE.structs[type].cost };
+  if (type === 'tower') c.wood = (c.wood ?? 0) + s.mods.towerCost;
+  if (type === 'torch') c.wood = (c.wood ?? 0) + s.mods.torchCost;
+  if (hasSynergy(s, 'storage', 'workshop')) {
+    for (const k of Object.keys(c) as Res[]) c[k] = Math.ceil((c[k] ?? 0) * (1 - BALANCE.storageWorkshopDiscount));
+  }
+  return c;
+}
+
+export function structMaxHp(s: GameState, type: StructType): number {
+  const doc = s.doctrine ? BALANCE.doctrine[s.doctrine].structHp : 0;
+  return Math.round(BALANCE.structs[type].hp * (1 + s.mods.wallHp + doc));
+}
+
+export function refundShare(s: GameState): number {
+  let share = BALANCE.refundShare + s.mods.refundBonus;
+  if (s.doctrine === 'fortress') share *= BALANCE.doctrine.fortress.refund;
+  if (s.doctrine === 'caravan') share *= BALANCE.doctrine.caravan.refund;
+  return Math.min(0.9, share);
+}
+
 /** Speed and damage multiplier from hunger. */
 export function hungerMult(s: GameState): number {
   return s.hunger <= 0 ? 1 : s.hunger === 1 ? BALANCE.hunger.weak : BALANCE.hunger.starving;
@@ -337,7 +445,7 @@ export function hungerMult(s: GameState): number {
 
 /** How many more dawns the current food feeds everyone. */
 export function foodDawns(s: GameState): number {
-  const need = s.units.length * BALANCE.foodPerUnit;
+  const need = foodNeed(s);
   return need > 0 ? Math.floor(s.res.food / need) : 99;
 }
 
@@ -372,6 +480,16 @@ export class Sim {
     state.deliveries ??= [];
     state.repairDebt ??= 0;
     state.formation ??= 'line';
+    state.mods = { ...defaultMods(), ...state.mods };
+    state.cooldowns = Object.assign({ arrowRain: 0, bell: 0, seal: 0, reserve: 0, patch: 0 }, state.cooldowns);
+    state.mode ??= 'endless';
+    state.goalNights ??= 0;
+    state.doctrine ??= null;
+    state.doctrineOffer ??= false;
+    state.unlocked ??= ['arrowRain', 'bell', 'seal'];
+    state.sealTimer ??= 0;
+    state.sealed ??= false;
+    state.reserveIds ??= [];
     state.groupOrders.shield ??= null;
     for (const u of state.units) u.squad ??= BALANCE.squads.defaultOf[u.type] ?? 0;
     state.nightStats = { ...emptyNightStats(), ...state.nightStats };
@@ -379,8 +497,8 @@ export class Sim {
     this.grid.rebuild(state);
   }
 
-  static create(seed: number): Sim {
-    return new Sim(createState(seed));
+  static create(seed: number, mode: GameMode = 'endless'): Sim {
+    return new Sim(createState(seed, mode));
   }
 
   static load(json: string): Sim {
@@ -413,7 +531,7 @@ export class Sim {
 
   private applyOne(c: Command): void {
     const s = this.state;
-    if (s.phase === 'gameover') return;
+    if (s.phase === 'gameover' || s.phase === 'victory') return;
     switch (c.t) {
       case 'selectGroup':
         s.selected = c.group >= 0 && c.group < UNIT_TYPES.length ? c.group : -1;
@@ -463,6 +581,12 @@ export class Sim {
       }
       case 'setFormation':
         s.formation = c.formation;
+        break;
+      case 'pickDoctrine':
+        this.pickDoctrine(c.doctrine);
+        break;
+      case 'dumpCargo':
+        this.dumpCargo();
         break;
       case 'upgradeTier':
         this.upgradeTier();
@@ -639,9 +763,10 @@ export class Sim {
     if (s.castle.moving) return this.emit('msg.cantBuildMoving', { level: 'warn' });
     if (countRooms(s, 'workshop') === 0) return this.emit('msg.needWorkshop', { level: 'warn' });
     if (!this.canBuildAt(type, pos)) return this.emit('msg.cantBuildHere', { level: 'warn' });
-    if (!canAfford(s, def.cost)) return this.emit('msg.notEnough', { level: 'warn' });
-    pay(s, def.cost);
-    const maxHp = Math.round(def.hp * (1 + s.mods.wallHp));
+    const cost = structCost(s, type);
+    if (!canAfford(s, cost)) return this.emit('msg.notEnough', { level: 'warn' });
+    pay(s, cost);
+    const maxHp = structMaxHp(s, type);
     const st: Structure = {
       id: s.nextId++,
       type,
@@ -686,8 +811,9 @@ export class Sim {
     if (!type) return;
     if (room.queue.length >= BALANCE.roomQueueMax) return this.emit('msg.queueFull', { level: 'warn' });
     if (popUsed(s) >= popCap(s)) return this.emit('msg.popFull', { level: 'warn' });
-    if (!canAfford(s, U[type].cost)) return this.emit('msg.notEnough', { level: 'warn' });
-    pay(s, U[type].cost);
+    const cost = unitCost(s, type);
+    if (!canAfford(s, cost)) return this.emit('msg.notEnough', { level: 'warn' });
+    pay(s, cost);
     room.queue.push(type);
   }
 
@@ -710,6 +836,7 @@ export class Sim {
     if (s.phase !== 'day') return this.emit('msg.cantMoveNight', { level: 'warn' });
     if (c.wheelHp <= 0) return this.emit('msg.wheelBroken', { level: 'warn' });
     if (Math.abs(c.destX - c.x) < 0.5) return this.emit('msg.noDestination', { level: 'warn' });
+    if (loadLevel(s) === 'overloaded') return this.emit('msg.overloaded', { level: 'warn' });
     const left = s.structs.length;
     s.structs = [];
     c.moving = true;
@@ -743,8 +870,13 @@ export class Sim {
   private ability(id: AbilityId, pos?: Vec): void {
     const s = this.state;
     const def = BALANCE.abilities[id];
+    if (!s.unlocked.includes(id)) return;
     if (s.cooldowns[id] > 0) return this.emit('msg.abilityCooldown', { level: 'warn' });
     if (s.phase === 'dawn') return;
+    if (id === 'seal' || id === 'reserve' || id === 'patch') {
+      this.emergency(id);
+      return;
+    }
     if (id === 'arrowRain') {
       if (!pos) return;
       const r = def.radius!;
@@ -767,34 +899,112 @@ export class Sim {
     s.cooldowns[id] = def.cooldown;
   }
 
+  /**
+   * Emergency measures (GDD v1.2 §7.1): each turns one asset into survival at a clear price.
+   * Seal: wall back up and damage halved for a while; outside buildings lose 40% and workers stay in until dawn.
+   * Reserve: three militia spearmen for tonight; they eat at dawn and go home.
+   * Patch: wood straight into the wall and the wheel.
+   */
+  private emergency(id: 'seal' | 'reserve' | 'patch'): void {
+    const s = this.state;
+    const c = s.castle;
+    if (id === 'seal') {
+      if (s.phase !== 'dusk' && s.phase !== 'night') return this.emit('msg.sealNight', { level: 'warn' });
+      const B = BALANCE.seal;
+      c.wallHp = Math.min(c.wallMax, c.wallHp + c.wallMax * B.wall);
+      s.sealTimer = B.seconds;
+      s.sealed = true;
+      for (const st of [...s.structs]) this.hurtStruct(st, st.maxHp * B.structCost);
+      for (const u of s.units) if (u.type === 'peasant' || u.type === 'builder') u.targetId = -1;
+      s.cooldowns.seal = 1e6; // once per night
+      this.emit('msg.sealed', { level: 'danger' });
+    } else if (id === 'reserve') {
+      if (s.phase !== 'dusk' && s.phase !== 'night') return this.emit('msg.sealNight', { level: 'warn' });
+      for (let i = 0; i < BALANCE.reserve.count; i++) {
+        const u = addUnit(s, 'spear', { x: c.x + (i - 1) * 1.2, z: c.z + C.halfSize + 1.5 });
+        s.reserveIds.push(u.id);
+      }
+      s.cooldowns.reserve = 1e6;
+      this.emit('msg.reserve', { level: 'info' });
+    } else {
+      const P = BALANCE.patch;
+      if (s.res.wood < P.wood) return this.emit('msg.notEnough', { level: 'warn' });
+      s.res.wood -= P.wood;
+      c.wallHp = Math.min(c.wallMax, c.wallHp + c.wallMax * P.wall);
+      c.wheelHp = Math.min(c.wheelMax, c.wheelHp + c.wheelMax * P.wheel);
+      s.cooldowns.patch = BALANCE.abilities.patch.cooldown;
+      this.emit('msg.patched', { level: 'info' });
+    }
+  }
+
+  private pickDoctrine(d: Doctrine): void {
+    const s = this.state;
+    if (s.phase !== 'dawn' || !s.doctrineOffer) return;
+    s.doctrine = d;
+    s.doctrineOffer = false;
+    const c = s.castle;
+    const max = Math.round(C.wallHp * (1 + s.mods.wallHp + BALANCE.doctrine[d].wallMax));
+    c.wallHp = Math.max(1, c.wallHp + max - c.wallMax);
+    c.wallMax = max;
+    for (const st of s.structs) {
+      const smax = structMaxHp(s, st.type);
+      st.hp = Math.max(1, st.hp + smax - st.maxHp);
+      st.maxHp = smax;
+    }
+    this.emit('msg.doctrine', { params: { doctrine: d } });
+    this.maybeStartDay();
+  }
+
+  /** Throw away part of the heaviest stock so the castle can leave. */
+  private dumpCargo(): void {
+    const s = this.state;
+    const heaviest = (['wood', 'stone', 'food'] as Res[]).sort((a, b) => s.res[b] - s.res[a])[0];
+    const n = Math.floor(s.res[heaviest] * BALANCE.load.dumpShare);
+    if (n <= 0) return;
+    s.res[heaviest] -= n;
+    this.emit('msg.dumped', { params: { res: heaviest, n } });
+  }
+
   private pickCard(id: CardId): void {
     const s = this.state;
     if (s.phase !== 'dawn' || s.cardPicked || !s.cards.includes(id)) return;
     const v = BALANCE.cards[id];
     const m = s.mods;
+    const c = s.castle;
+    const rescaleWall = () => {
+      const doc = s.doctrine ? BALANCE.doctrine[s.doctrine].wallMax : 0;
+      const max = Math.round(C.wallHp * (1 + m.wallHp + doc));
+      c.wallHp += max - c.wallMax;
+      c.wallMax = max;
+      for (const st of s.structs) {
+        const smax = structMaxHp(s, st.type);
+        st.hp += smax - st.maxHp;
+        st.maxHp = smax;
+      }
+    };
+    // Each card: the gain, then its price.
     switch (id) {
-      case 'soldierHp': m.soldierHp += v; break;
-      case 'towerRate': m.towerRate += v; break;
-      case 'moveSpeed': m.moveSpeed *= v; break;
-      case 'carry': m.carry += v; break;
-      case 'torchRadius': m.torchRadius += v; break;
-      case 'wallHp': {
-        m.wallHp += v;
-        const c = s.castle;
-        const max = Math.round(C.wallHp * (1 + m.wallHp));
-        c.wallHp += max - c.wallMax;
-        c.wallMax = max;
-        for (const st of s.structs) {
-          const smax = Math.round(BALANCE.structs[st.type].hp * (1 + m.wallHp));
-          st.hp += smax - st.maxHp;
-          st.maxHp = smax;
-        }
+      case 'soldierHp': m.soldierHp += v; m.soldierFood += 5; break;
+      case 'towerRate': m.towerRate += v; m.towerCost += 10; break;
+      case 'moveSpeed': {
+        m.moveSpeed *= v;
+        m.wheelMax *= 0.7;
+        const wmax = Math.round(C.wheelHp * m.wheelMax);
+        c.wheelHp = Math.min(c.wheelHp, wmax);
+        c.wheelMax = wmax;
         break;
       }
-      case 'repairSpeed': m.repairSpeed *= v; break;
-      case 'extraSlot': m.extraSlots += v; break;
-      case 'archerDmg': m.archerDmg += v; break;
-      case 'coreHeal': s.castle.coreHp = Math.min(s.castle.coreMax, s.castle.coreHp + s.castle.coreMax * v); break;
+      case 'carry': m.carry += v; m.peasantSpeed *= 0.9; break;
+      case 'torchRadius': m.torchRadius += v; m.torchConfirm = 1; m.torchCost += 4; break;
+      case 'wallHp': m.wallHp += v; m.castleLoad += 10; rescaleWall(); break;
+      case 'quickSalvage': m.dismantleSpeed *= v; m.refundBonus += 0.2; m.repairSpeed *= 0.75; break;
+      case 'extraSlot': m.extraSlots += v; m.castleLoad += 8; break;
+      case 'archerDmg': m.archerDmg += v; m.archerCost += 10; break;
+      case 'coreHeal': c.coreHp = Math.min(c.coreMax, c.coreHp + c.coreMax * v); break;
+      case 'reserve': if (!s.unlocked.includes('reserve')) s.unlocked.push('reserve'); break;
+      case 'chokeHold': m.holdArmor += v; m.retreatSpeed *= 0.8; break;
+      case 'lightPack': m.loadCap += v; m.storageCap -= 0.2; break;
+      case 'fieldRepair': if (!s.unlocked.includes('patch')) s.unlocked.push('patch'); m.repairCost *= 1.25; break;
     }
     s.cardPicked = true;
     this.refreshUnitStats();
@@ -826,8 +1036,9 @@ export class Sim {
 
   step(): void {
     const s = this.state;
-    if (s.phase === 'gameover' || s.phase === 'dawn') return;
+    if (s.phase === 'gameover' || s.phase === 'dawn' || s.phase === 'victory') return;
     s.tick++;
+    if (s.sealTimer > 0) s.sealTimer = Math.max(0, s.sealTimer - DT);
     s.phaseTime += DT;
     this.lightCache = lights(s);
     this.engaged.clear();
@@ -890,7 +1101,7 @@ export class Sim {
 
     // Pressure patterns: one problem on early nights, two from the middle of the run.
     const pool = (Object.keys(D.patternFrom) as (keyof typeof D.patternFrom)[]).filter((p) => s.night >= D.patternFrom[p] && (p !== 'split' || allowed.length >= 2));
-    const picks: Pattern[] = isBossNight(s.night) ? ['boss'] : [];
+    const picks: Pattern[] = isBossNight(s.night) || s.night === s.goalNights ? ['boss'] : [];
     const want = s.night >= D.twoPatternsFrom ? 2 : 1;
     const order = shuffle(s, [...pool]);
     for (const p of order) if (picks.length < want && !picks.includes(p)) picks.push(p);
@@ -927,7 +1138,7 @@ export class Sim {
       start: 2 + i * seg,
       count: Math.max(1, Math.round((total * sh) / shareSum)),
       spawned: 0,
-      boss: isBossNight(s.night) && i === wc - 1,
+      boss: (isBossNight(s.night) || s.night === s.goalNights) && i === wc - 1,
     }));
     const threat = weights.map((w): Threat => (w >= 0.45 ? 'high' : w >= 0.25 ? 'mid' : 'low'));
     s.plan = {
@@ -940,7 +1151,7 @@ export class Sim {
       mix,
       harassDir,
       harassShare: harassDir ? D.harassShare : 0,
-      confirmed: countRooms(s, 'watchtower') > 0,
+      confirmed: countRooms(s, 'watchtower') > 0 || (s.mods.torchConfirm > 0 && s.structs.some((x) => x.type === 'torch' && x.built >= 1)),
     };
     s.overflowHp = 0;
     this.emit('msg.nightPlan', { params: { patterns: picks.join(',') } });
@@ -959,8 +1170,18 @@ export class Sim {
     const route: 'stay' | 'move' | 'start' = s.night === 1 ? 'start' : stayed ? 'stay' : 'move';
     s.castle.nightsHere = stayed ? s.castle.nightsHere + 1 : 1;
     s.castle.lastNightX = s.castle.x;
+    // The militia go home and are paid in food; the seal is lifted.
+    if (s.reserveIds.length) {
+      s.units = s.units.filter((u) => !s.reserveIds.includes(u.id));
+      s.res.food = Math.max(0, s.res.food - BALANCE.reserve.foodAtDawn);
+      s.reserveIds = [];
+    }
+    s.sealed = false;
+    s.sealTimer = 0;
+    s.cooldowns.seal = 0;
+    s.cooldowns.reserve = 0;
     // Food: a short dawn weakens everyone; two in a row also make a villager leave.
-    const need = s.units.length * BALANCE.foodPerUnit;
+    const need = foodNeed(s);
     st.food = Math.min(need, s.res.food);
     st.hungry = s.res.food < need;
     s.res.food = Math.max(0, s.res.food - need);
@@ -991,10 +1212,23 @@ export class Sim {
       cause: st.cause,
     });
     // Card offer.
-    const pool = CARD_IDS.filter((c) => c !== 'extraSlot' || slotCount(s) < C.maxSlots);
+    const pool = CARD_IDS.filter(
+      (c) =>
+        (c !== 'extraSlot' || slotCount(s) < C.maxSlots) &&
+        (c !== 'coreHeal' || s.castle.coreHp < s.castle.coreMax * 0.7) &&
+        (c !== 'reserve' || !s.unlocked.includes('reserve')) &&
+        (c !== 'fieldRepair' || !s.unlocked.includes('patch')),
+    );
     s.cards = shuffle(s, [...pool]).slice(0, 3);
     s.cardPicked = false;
     s.plan = null;
+    if (s.goalNights > 0 && s.stats.nightsSurvived >= s.goalNights) {
+      // Journey / challenge complete.
+      s.phase = 'victory';
+      this.emit('msg.victory', { level: 'info' });
+      return;
+    }
+    s.doctrineOffer = !s.doctrine && s.stats.nightsSurvived >= BALANCE.doctrine.offerAfterNight;
     s.night++;
     s.routes = this.routeOptions();
     s.routePicked = false;
@@ -1007,7 +1241,7 @@ export class Sim {
   routeOptions(): RouteOption[] {
     const s = this.state;
     const here = chunkOf(s.castle.x);
-    const speed = C.moveSpeed * s.mods.moveSpeed;
+    const speed = loadLevel(s) === 'overloaded' ? 0 : travelSpeed(s);
     const opts: RouteOption[] = [];
     const tHere = chunkTerrain(s.seed, here);
     const stayDirs = dirCount(s.night, true, false, tHere);
@@ -1035,7 +1269,7 @@ export class Sim {
         danger: this.dangerLevel(chunk, dirs),
         resourcePct: 1,
         exhausted: false,
-        travel: Math.round(Math.abs(chunkCenter(chunk) - s.castle.x) / speed),
+        travel: Math.round(Math.abs(chunkCenter(chunk) - s.castle.x) / Math.max(0.01, speed)),
       });
     }
     return opts;
@@ -1047,7 +1281,7 @@ export class Sim {
 
   private maybeStartDay(): void {
     const s = this.state;
-    if (!s.cardPicked || !s.routePicked) return;
+    if (!s.cardPicked || !s.routePicked || s.doctrineOffer) return;
     s.phase = 'day';
     s.phaseTime = 0;
     s.phaseLength = dayLength(s.night);
@@ -1074,7 +1308,7 @@ export class Sim {
     const s = this.state;
     const c = s.castle;
     if (c.moving) {
-      const speed = C.moveSpeed * s.mods.moveSpeed;
+      const speed = travelSpeed(s);
       const d = c.destX - c.x;
       const step = Math.sign(d) * Math.min(Math.abs(d), speed * DT);
       c.x += step;
@@ -1112,8 +1346,8 @@ export class Sim {
     for (let i = 0; i < slotCount(s); i++) {
       const r = s.rooms[i];
       if (!r || r.queue.length === 0) continue;
-      r.progress += DT;
       const type = r.queue[0];
+      r.progress += DT * (type === 'peasant' && hasSynergy(s, 'kitchen', 'house') ? 1 + BALANCE.kitchen.houseTrainBoost : 1);
       if (r.progress >= U[type].train) {
         r.progress = 0;
         r.queue.shift();
@@ -1257,7 +1491,7 @@ export class Sim {
 
   private peasant(u: Unit): void {
     const s = this.state;
-    const sheltering = s.phase === 'dusk' || s.phase === 'night' || u.order?.kind === 'home';
+    const sheltering = s.phase === 'dusk' || s.phase === 'night' || u.order?.kind === 'home' || s.sealed;
     const cap = Math.round(U.peasant.carry * (1 + s.mods.carry));
     if (sheltering || u.carry >= cap) {
       u.job = sheltering ? 'shelter' : 'deliver';
@@ -1346,7 +1580,9 @@ export class Sim {
     const score = (r: LaborRes) => {
       const p = s.labor[r];
       if (p <= 0) return -1;
-      const need = r === 'food' && foodDawns(s) < 2 ? BALANCE.economy.hungryFoodWeight : 1;
+      // Stock matters too: what is short gets more hands, what piles up gets fewer.
+      const stock = Math.min(2, Math.max(0.3, 1.6 - s.res[r] / BALANCE.economy.stockTarget));
+      const need = (r === 'food' && foodDawns(s) < 2 ? BALANCE.economy.hungryFoodWeight : 1) * stock;
       let workers = 0;
       for (const o of s.units) if (o !== u && o.type === 'peasant' && !o.order && o.workRes === r) workers++;
       return (p * need) / (1 + workers);
@@ -1389,7 +1625,10 @@ export class Sim {
   private deliver(u: Unit): void {
     if (u.carry > 0 && u.carryRes) {
       const s = this.state;
-      s.res[u.carryRes] += u.carry;
+      const cap = u.carryRes === 'gold' ? Infinity : storageCap(s);
+      const room = Math.max(0, cap - s.res[u.carryRes]);
+      if (room < u.carry && s.tick % (BALANCE.tickRate * 15) === 0) this.emit('msg.storageFull', { params: { res: u.carryRes }, level: 'warn' });
+      s.res[u.carryRes] += Math.min(room, u.carry);
       s.deliveries.push({ tick: s.tick, res: u.carryRes, n: u.carry });
       const since = s.tick - BALANCE.economy.incomeWindow * BALANCE.tickRate;
       if (s.deliveries[0].tick < since) s.deliveries = s.deliveries.filter((d) => d.tick >= since);
@@ -1448,8 +1687,9 @@ export class Sim {
     if (st.dismantle) {
       u.job = 'build';
       u.work += DT;
-      if (u.work >= BALANCE.dismantleWork) {
-        refund(s, def.cost, BALANCE.refundShare);
+      const work = BALANCE.dismantleWork / s.mods.dismantleSpeed / (s.doctrine === 'caravan' ? BALANCE.doctrine.caravan.dismantle : 1);
+      if (u.work >= work) {
+        refund(s, structCost(s, st.type), refundShare(s));
         this.removeStruct(st);
         this.emit('msg.dismantled', { params: { struct: st.type } });
         u.targetId = -1;
@@ -1477,7 +1717,7 @@ export class Sim {
       if (s.tick % (BALANCE.tickRate * 20) === 0) this.emit('msg.noWoodRepair', { level: 'warn' });
       return 0;
     }
-    s.repairDebt += hp * BALANCE.repairWoodPerHp;
+    s.repairDebt += hp * BALANCE.repairWoodPerHp * s.mods.repairCost;
     while (s.repairDebt >= 1 && s.res.wood > 0) {
       s.res.wood--;
       s.repairDebt--;
@@ -1850,7 +2090,7 @@ export class Sim {
       const m = this.nearestVisibleMonster(st.cx + 0.5, st.cz + 0.5, def.range!);
       if (m) {
         st.cooldown = def.cooldown! / (1 + s.mods.towerRate);
-        this.hurtMonster(m, def.dmg);
+        this.hurtMonster(m, def.dmg * (1 + (s.doctrine ? BALANCE.doctrine[s.doctrine].towerDmg : 0)));
         this.emit('fx.arrow', { pos: { x: st.cx + 0.5, z: st.cz + 0.5 }, to: { x: m.x, z: m.z } });
       }
     }
@@ -1904,7 +2144,8 @@ export class Sim {
 
   private hurtUnit(u: Unit, dmg: number, type: DamageType = 'physical'): void {
     if (u.hp <= 0) return;
-    u.hp -= dmg * (BALANCE.resist[u.type]?.[type] ?? 1);
+    const hold = u.order?.kind === 'hold' ? 1 - this.state.mods.holdArmor : 1;
+    u.hp -= dmg * (BALANCE.resist[u.type]?.[type] ?? 1) * hold;
     if (u.hp > 0) return;
     const st = this.state.nightStats;
     if (u.carry > 0 && u.carryRes) {
@@ -1933,6 +2174,7 @@ export class Sim {
     const s = this.state;
     const c = s.castle;
     const st = s.nightStats;
+    if (s.sealTimer > 0) dmg *= 1 - BALANCE.seal.damageCut;
     if (m.type !== 'ranged') c.wheelHp = Math.max(0, c.wheelHp - dmg * C.wheelDamageShare);
     if (c.wallHp > 0) {
       const absorbed = Math.min(c.wallHp, dmg);
@@ -1986,7 +2228,9 @@ export class Sim {
     const s = this.state;
     const d = toCastle ? distToCastle(s, u.x, u.z) : Math.hypot(x - u.x, z - u.z);
     if (d <= near) return true;
-    const speed = U[u.type].speed * hungerMult(s);
+    let speed = U[u.type].speed * hungerMult(s);
+    if (u.type === 'peasant') speed *= s.mods.peasantSpeed;
+    if (u.order?.kind === 'retreat') speed *= s.mods.retreatSpeed;
     const direct = Math.hypot(x - u.x, z - u.z);
     if (direct < 2.5 || toCastle && d < 1.5) {
       this.moveDirect(u, x, z, speed, true);

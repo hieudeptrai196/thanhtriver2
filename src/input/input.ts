@@ -317,6 +317,18 @@ export class Input {
       case 'KeyE':
         this.hud.useSkill('bell');
         break;
+      case 'KeyZ':
+        this.hud.useSkill('seal');
+        break;
+      case 'KeyX':
+        this.hud.useSkill('reserve');
+        break;
+      case 'KeyV':
+        this.hud.useSkill('patch');
+        break;
+      case 'KeyT':
+        this.ctl.toggleSpeed();
+        break;
       case 'KeyP':
         this.ctl.togglePause();
         break;

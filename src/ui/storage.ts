@@ -9,6 +9,8 @@ export interface ScoreRow {
   bosses: number;
   score: number;
   date: number;
+  mode?: string;
+  won?: boolean;
 }
 
 export function loadSave(): string | null {

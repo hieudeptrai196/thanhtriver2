@@ -439,6 +439,21 @@ body {
   color: #b0f6ff;
 }
 
+.tb-load {
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--good);
+}
+.tb-load.heavy {
+  color: #ffd070;
+}
+.tb-load.veryHeavy {
+  color: #ff9a50;
+}
+.tb-load.overloaded {
+  color: var(--danger);
+  font-weight: 800;
+}
 .tb-food {
   font-size: 12px;
   color: var(--muted);
@@ -842,6 +857,25 @@ body {
 }
 .btn.group .ex {
   color: var(--accent);
+}
+
+/* Narrow desktops and tablets: the bottom bars show icons and counts only (names stay in tooltips). */
+@media (max-width: 1100px) {
+  .groups .btn .nm,
+  .actions .btn .nm,
+  .squad-bar .btn .nm,
+  .topbar .btn .nm {
+    display: none;
+  }
+  .groups .btn .ic,
+  .actions .btn .ic {
+    margin-right: 0;
+    font-size: 16px;
+  }
+  .groups,
+  .actions {
+    flex-wrap: nowrap;
+  }
 }
 
 /* Phones in landscape: icons and numbers only, one row each. */

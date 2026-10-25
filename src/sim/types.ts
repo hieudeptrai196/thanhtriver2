@@ -1,6 +1,8 @@
 import type {
   AbilityId,
+  Doctrine,
   Formation,
+  GameMode,
   CardId,
   Dir,
   MonsterType,
@@ -17,7 +19,7 @@ export interface Vec {
   z: number;
 }
 
-export type Phase = 'day' | 'dusk' | 'night' | 'dawn' | 'gameover';
+export type Phase = 'day' | 'dusk' | 'night' | 'dawn' | 'gameover' | 'victory';
 
 export type Job = 'gather' | 'deliver' | 'build' | 'repair' | 'guard' | 'shelter' | 'attack' | 'idle';
 
@@ -143,6 +145,22 @@ export interface Mods {
   repairSpeed: number;
   extraSlots: number;
   archerDmg: number;
+  // Drawbacks and new effects of the v1.2 cards.
+  soldierFood: number; // extra food per soldier trained
+  towerCost: number; // extra wood per tower
+  wheelMax: number; // multiplier
+  peasantSpeed: number; // multiplier
+  torchCost: number; // extra wood per torch
+  torchConfirm: number; // 1 = a torch confirms the night forecast
+  castleLoad: number; // extra load
+  dismantleSpeed: number; // multiplier
+  refundBonus: number; // added to the dismantle refund share
+  archerCost: number; // extra wood per archer
+  holdArmor: number; // damage cut while on Hold
+  retreatSpeed: number; // multiplier while retreating
+  loadCap: number; // added to capacity, as a share
+  storageCap: number; // added to storage, as a share
+  repairCost: number; // multiplier on wood per hp
 }
 
 export interface NightStats {
@@ -215,6 +233,14 @@ export interface GameState {
   deliveries: { tick: number; res: Res; n: number }[];
   repairDebt: number; // wood owed for repairs, paid a whole unit at a time
   formation: Formation;
+  mode: GameMode;
+  goalNights: number; // 0 = endless
+  doctrine: Doctrine | null;
+  doctrineOffer: boolean; // the dawn screen asks for a doctrine first
+  unlocked: AbilityId[];
+  sealTimer: number; // seconds the emergency seal still cuts damage
+  sealed: boolean; // workers stay inside until dawn after sealing
+  reserveIds: number[]; // militia called by the Reserve card, gone at dawn
   history: NightRecord[];
   fireDone: boolean;
   newRegion: boolean;
@@ -245,6 +271,8 @@ export type Command =
   | { t: 'assignSquad'; ids: number[]; squad: number }
   | { t: 'selectSquad'; squad: number }
   | { t: 'setFormation'; formation: Formation }
+  | { t: 'pickDoctrine'; doctrine: Doctrine }
+  | { t: 'dumpCargo' }
   | { t: 'orderAll'; kind: 'home' }
   | { t: 'build'; type: StructType; pos: Vec }
   | { t: 'dismantle'; pos: Vec }

@@ -1,9 +1,9 @@
 import { BALANCE, type CardId, type RoomType, type StructType } from '../data/balance';
-import { canAfford, groupCounts, popCap, popUsed, slotCount, Sim } from './sim';
+import { canAfford, groupCounts, loadLevel, popCap, popUsed, slotCount, structCost, unitCost, Sim } from './sim';
 import type { Command } from './types';
 
-const CARD_PRIORITY: CardId[] = ['wallHp', 'soldierHp', 'towerRate', 'archerDmg', 'extraSlot', 'repairSpeed', 'carry', 'torchRadius', 'moveSpeed', 'coreHeal'];
-const ROOM_PLAN: RoomType[] = ['house', 'workshop', 'barracks', 'watchtower', 'house', 'range', 'watchtower', 'house', 'barracks', 'house', 'watchtower', 'house'];
+const CARD_PRIORITY: CardId[] = ['wallHp', 'soldierHp', 'fieldRepair', 'reserve', 'towerRate', 'archerDmg', 'chokeHold', 'extraSlot', 'lightPack', 'carry', 'torchRadius', 'quickSalvage', 'moveSpeed', 'coreHeal'];
+const ROOM_PLAN: RoomType[] = ['house', 'workshop', 'barracks', 'watchtower', 'kitchen', 'range', 'storage', 'house', 'barracks', 'house', 'watchtower', 'house'];
 const WANT = { peasant: 6, builder: 2, spear: 7, shield: 4, archer: 8 };
 
 /**
@@ -26,6 +26,7 @@ export function botCommands(sim: Sim, policy: BotPolicy = 'tactical'): Command[]
   const s = sim.state;
   const out: Command[] = [];
   if (s.phase === 'dawn') {
+    if (s.doctrineOffer) out.push({ t: 'pickDoctrine', doctrine: policy === 'nomad' ? 'caravan' : 'fortress' });
     if (!s.cardPicked) {
       const pick = s.castle.coreHp / s.castle.coreMax < 0.5 && s.cards.includes('coreHeal') ? 'coreHeal' : CARD_PRIORITY.find((c) => s.cards.includes(c))!;
       out.push({ t: 'pickCard', id: pick });
@@ -38,10 +39,12 @@ export function botCommands(sim: Sim, policy: BotPolicy = 'tactical'): Command[]
     }
     return out;
   }
-  if (s.phase === 'gameover' || s.tick % 30 !== 0) return out;
+  if (s.phase === 'gameover' || s.phase === 'victory' || s.tick % 30 !== 0) return out;
   const c = s.castle;
 
-  if (s.phase === 'day' && !c.moving && Math.abs(c.destX - c.x) > 0.5 && s.phaseTime > 3 && c.wheelHp > 0) out.push({ t: 'toggleMove' });
+  if (s.phase === 'day' && !c.moving && Math.abs(c.destX - c.x) > 0.5 && s.phaseTime > 3 && c.wheelHp > 0) {
+    out.push(loadLevel(s) === 'overloaded' ? { t: 'dumpCargo' } : { t: 'toggleMove' });
+  }
 
   // Rooms.
   const n = slotCount(s);
@@ -61,7 +64,7 @@ export function botCommands(sim: Sim, policy: BotPolicy = 'tactical'): Command[]
       if (!r || r.queue.length > 0) continue;
       const type = BALANCE.rooms[r.type].trains.find((t) => counts[t] < WANT[t]);
       if (!type) continue;
-      if (canAfford(s, BALANCE.units[type].cost) && s.res.food > 25) {
+      if (canAfford(s, unitCost(s, type)) && s.res.food > 25) {
         out.push({ t: 'queueUnit', slot: i, type });
         break;
       }
@@ -77,7 +80,7 @@ export function botCommands(sim: Sim, policy: BotPolicy = 'tactical'): Command[]
       const d = dirs[idx % dirs.length];
       const off = Math.floor(idx / dirs.length) * 3 - 1.5;
       const pos = d === 'E' ? { x: c.x + r, z: off } : d === 'W' ? { x: c.x - r, z: off } : d === 'N' ? { x: c.x + off, z: -r } : { x: c.x + off, z: r };
-      if (sim.canBuildAt(type, pos) && canAfford(s, BALANCE.structs[type].cost)) out.push({ t: 'build', type, pos });
+      if (sim.canBuildAt(type, pos) && canAfford(s, structCost(s, type))) out.push({ t: 'build', type, pos });
     };
     if (torches < 4 && s.res.wood > 40) place('torch', 12, torches);
     else if (towers < 4 && s.res.wood > 90) place('tower', 7, towers);
@@ -92,6 +95,10 @@ export function botCommands(sim: Sim, policy: BotPolicy = 'tactical'): Command[]
       out.push({ t: 'ability', id: 'arrowRain', pos: { x, z } });
     }
     if (c.coreHp / c.coreMax < 0.35 && s.cooldowns.bell <= 0) out.push({ t: 'ability', id: 'bell' });
+    // Emergency measures when the wall is about to go.
+    if (c.wallHp / c.wallMax < 0.2 && s.cooldowns.seal <= 0) out.push({ t: 'ability', id: 'seal' });
+    if (s.unlocked.includes('patch') && c.wallHp / c.wallMax < 0.4 && s.res.wood >= BALANCE.patch.wood && s.cooldowns.patch <= 0) out.push({ t: 'ability', id: 'patch' });
+    if (s.unlocked.includes('reserve') && s.monsters.length > 12 && s.cooldowns.reserve <= 0) out.push({ t: 'ability', id: 'reserve' });
   }
   return out;
 }
@@ -109,7 +116,7 @@ export interface BotRun {
 }
 
 export function runBot(seed: number, maxNights = 30, policy: BotPolicy = 'tactical', maxTicks = 60 * 60 * 150): BotRun {
-  const sim = Sim.create(seed);
+  const sim = Sim.create(seed, 'endless');
   let ticks = 0;
   while (sim.state.phase !== 'gameover' && sim.state.night <= maxNights && ticks < maxTicks) {
     sim.apply(botCommands(sim, policy));
