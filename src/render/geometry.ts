@@ -219,3 +219,37 @@ export function scaffoldGeometry(): THREE.BufferGeometry {
   parts.push(part(new THREE.BoxGeometry(0.4, 0.025, 0.98), plank, 0.26, 0.98, 0));
   return merge(parts);
 }
+
+/** An irregular flat patch (unit radius) for ground under resource nodes. */
+export function blobGeometry(): THREE.BufferGeometry {
+  const n = 11;
+  const pts: THREE.Vector2[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const r = 0.82 + 0.18 * Math.sin(i * 2.3) * Math.cos(i * 1.7);
+    pts.push(new THREE.Vector2(Math.cos(a) * r, Math.sin(a) * r));
+  }
+  const g = new THREE.ShapeGeometry(new THREE.Shape(pts));
+  g.rotateX(-Math.PI / 2);
+  return g;
+}
+
+/** Ploughed furrows for crop plots: dark ridges and lighter troughs along one axis. */
+export function furrowTexture(): THREE.Texture {
+  const c = document.createElement('canvas');
+  c.width = 64;
+  c.height = 64;
+  const g = c.getContext('2d')!;
+  for (let i = 0; i < 4; i++) {
+    const y = i * 16;
+    const grad = g.createLinearGradient(0, y, 0, y + 16);
+    grad.addColorStop(0, '#6b4c2e');
+    grad.addColorStop(0.5, '#9a7448');
+    grad.addColorStop(1, '#6b4c2e');
+    g.fillStyle = grad;
+    g.fillRect(0, y, 64, 16);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}

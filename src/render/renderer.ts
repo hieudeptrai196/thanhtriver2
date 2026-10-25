@@ -14,6 +14,8 @@ import {
   monsterGeometry,
   nodeGeometry,
   scaffoldGeometry,
+  blobGeometry,
+  furrowTexture,
   structGeometry,
   unitGeometry,
   wheelGeometry,
@@ -250,6 +252,9 @@ export class GameRenderer {
   private monsters = {} as Record<MonsterType, Crowd>;
   private nodes = {} as Record<NodeType, Instanced[]>;
   private stumps: Instanced;
+  // Ground under resource nodes: leaf litter, gravel (blob) and ploughed soil (furrowed plot).
+  private nodeBlobs: Instanced;
+  private nodePlots: Instanced;
   private structs = {} as Record<StructType, Instanced>;
   private castleCode: THREE.Mesh;
   private flags: THREE.Group;
@@ -431,6 +436,10 @@ export class GameRenderer {
     const stumpGeo = new THREE.CylinderGeometry(0.2, 0.25, 0.3, 6);
     stumpGeo.translate(0, 0.15, 0);
     this.stumps = new Instanced(stumpGeo, sharedStandard({ color: 0x806040, roughness: 0.9 }), 800, this.scene);
+    this.nodeBlobs = new Instanced(blobGeometry(), new THREE.MeshStandardMaterial({ roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }), 800, this.scene, false);
+    this.nodeBlobs.mesh.receiveShadow = true;
+    this.nodePlots = new Instanced(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: furrowTexture(), roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }), 400, this.scene, false);
+    this.nodePlots.mesh.receiveShadow = true;
     for (const t of ['wall', 'tower', 'torch'] as StructType[]) this.structs[t] = new Instanced(structGeometry(t), flat(), 300, this.scene);
     // Building sites: a timber scaffold that grows with progress around the rising structure.
     this.blueprint = new Instanced(scaffoldGeometry(), sharedStandard({ vertexColors: true, flat: true, roughness: 0.9 }), 300, this.scene, true);
@@ -499,7 +508,7 @@ export class GameRenderer {
     this.monsters.brute.setModel(m.chars.brute);
     this.monsters.ranged.setModel(m.chars.ranged);
     this.monsters.boss.setModel(m.chars.brute);
-    const max = 800;
+    const max = 1800; // nodes are drawn as small clusters (up to six props each)
     // The code-built stand-ins go away: left in the scene they would keep showing where things were before loading.
     for (const v of [...this.nodes.tree, ...this.nodes.rock, ...this.nodes.bush, ...this.cliffs]) v.remove();
     this.nodes.tree = [m.props.treeA, m.props.treeB].map((b) => new Instanced(b.geo, b.materials, max, this.scene));
@@ -880,7 +889,7 @@ export class GameRenderer {
     this.railway.position.x = Math.round(t.x);
 
     this.updateGround(s.seed, t.x);
-    this.grass.update(s.seed, t.x, this.time, !this.renderer.shadowMap.enabled);
+    this.grass.update(s.seed, t.x, this.time, !this.renderer.shadowMap.enabled, s.nodes);
 
     // Castle.
     const c = s.castle;
@@ -972,22 +981,72 @@ export class GameRenderer {
     this.drawCorpses(new Set(Object.values(this.monsters)));
     for (const k of Object.keys(this.monsters) as MonsterType[]) this.monsters[k].end();
 
-    // Resource nodes shrink as they deplete.
+    // Resource nodes are small clusters on their own ground, and they visibly run down:
+    // a copse loses trees to stumps, an outcrop breaks into rubble, a field is harvested row by row.
     for (const k of Object.keys(this.nodes) as NodeType[]) for (const v of this.nodes[k]) v.begin();
     this.stumps.begin();
+    this.nodeBlobs.begin();
+    this.nodePlots.begin();
     for (const nd of s.nodes) {
       if (Math.abs(nd.x - t.x) > 90) continue;
-      const r = nd.amount / nd.max;
-      if (r <= 0) {
-        if (nd.type === 'tree') this.stumps.add(nd.x, 0, nd.z, nd.id, 1, 1, 1, 0xffffff);
-        continue;
-      }
-      const sc = 0.45 + 0.55 * r;
+      const r = Math.max(0, nd.amount / nd.max);
+      const hv = (k: number) => {
+        const v = Math.sin(nd.id * 12.9898 + k * 78.233) * 43758.5453;
+        return v - Math.floor(v);
+      };
       const variants = this.nodes[nd.type];
-      variants[nd.id % variants.length].add(nd.x, 0, nd.z, nd.id * 1.7, sc, sc, sc, 0xffffff);
+      if (nd.type === 'tree') {
+        this.nodeBlobs.add(nd.x, 0.02, nd.z, hv(1) * 6, 1.5 + hv(2) * 0.3, 1, 1.2 + hv(3) * 0.3, 0x7a6a40);
+        const spots: [number, number][] = [[0, 0], [0.8, 0.35], [-0.55, 0.7]];
+        const alive = r > 0 ? Math.ceil(r * 3) : 0;
+        spots.forEach(([ox, oz], i) => {
+          const a = hv(4) * 6;
+          const x = nd.x + ox * Math.cos(a) - oz * Math.sin(a);
+          const z = nd.z + ox * Math.sin(a) + oz * Math.cos(a);
+          if (i < alive) {
+            const sc = (i === 0 ? 1.2 : 0.95 + hv(5 + i) * 0.2) * (i === alive - 1 && r < 1 ? 0.85 + 0.15 * ((r * 3) % 1 || 1) : 1);
+            variants[(nd.id + i) % variants.length].add(x, 0, z, hv(8 + i) * 6, sc, sc, sc, 0xd8e6d0);
+          } else this.stumps.add(x, 0, z, hv(8 + i) * 6, 1.1, 1, 1.1, 0xffffff);
+        });
+      } else if (nd.type === 'rock') {
+        const mined = 1 - r;
+        this.nodeBlobs.add(nd.x, 0.02, nd.z, hv(1) * 6, 1.2 + mined * 0.8, 1, 1.0 + mined * 0.7, 0xa69c88);
+        if (r > 0) {
+          const sc = 0.6 + 0.6 * r;
+          // Fresh-cut stone shows lighter as the outcrop is worked.
+          variants[nd.id % variants.length].add(nd.x, 0, nd.z, nd.id * 1.7, sc, sc, sc, mined > 0.05 ? 0xf2ece0 : 0xd8d2c6);
+        }
+        const chips = Math.round(mined * 4) + (r <= 0 ? 1 : 0);
+        for (let i = 0; i < chips; i++) {
+          const a = hv(10 + i) * 6.28;
+          const d = 0.6 + hv(20 + i) * 0.5;
+          const cs = 0.22 + hv(30 + i) * 0.16;
+          variants[(nd.id + i + 1) % variants.length].add(nd.x + Math.cos(a) * d, 0, nd.z + Math.sin(a) * d, a * 3, cs, cs, cs, 0xe6e0d4);
+        }
+      } else {
+        // A small ploughed plot in rows; harvested plants leave bare soil.
+        const rot = Math.floor(hv(1) * 4) * (Math.PI / 2);
+        this.nodePlots.add(nd.x, 0.025, nd.z, rot, 1.9, 1, 1.5, r > 0 ? 0xffffff : 0xc8b8a0);
+        const plant = variants[nd.id % variants.length];
+        const total = 6;
+        const alive = r > 0 ? Math.ceil(r * total) : 0;
+        const pumpkin = nd.id % variants.length === 0;
+        for (let i = 0; i < alive; i++) {
+          const col = i % 3;
+          const row = Math.floor(i / 3);
+          const lx = (col - 1) * 0.55;
+          const lz = (row - 0.5) * 0.6;
+          const x = nd.x + lx * Math.cos(rot) - lz * Math.sin(rot);
+          const z = nd.z + lx * Math.sin(rot) + lz * Math.cos(rot);
+          const sc = (pumpkin ? 0.62 : 0.85) * (0.9 + hv(40 + i) * 0.2);
+          plant.add(x, 0, z, hv(50 + i) * 6, sc, sc, sc, 0xffffff);
+        }
+      }
     }
     for (const k of Object.keys(this.nodes) as NodeType[]) for (const v of this.nodes[k]) v.end();
     this.stumps.end();
+    this.nodeBlobs.end();
+    this.nodePlots.end();
 
     // Structures and blueprints.
     for (const k of Object.keys(this.structs) as StructType[]) this.structs[k].begin();

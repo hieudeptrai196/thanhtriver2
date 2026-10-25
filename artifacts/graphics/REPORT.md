@@ -107,3 +107,45 @@ need an image service.
 
 Average 1.9 → 1.95. Premium still needs Interactables ≥ 2 (resource node depletion states and silhouettes at the
 gameplay zoom) and an average of 2.3.
+
+---
+
+# Resource node pass (threejs-aaa-graphics-builder)
+
+**Before.** At the default camera a resource was one small stock prop: a lone pine (the same green as the peasants'
+hoods), a small grey lump, or a single pumpkin, sitting in grass; a worked node only shrank, and a spent tree left a
+tiny stump.
+
+**After.** Each node is a cluster on its own clearing, shaped by its role:
+- Copse: up to three trees (slightly cooler green than the peasants) on leaf litter; each third harvested fells one tree
+  and leaves a stump; a spent copse is a ring of stumps.
+- Outcrop: one large rock on a gravel bed; as it is worked the cut face shows lighter, the gravel spreads and rubble
+  chips appear around it; a spent outcrop is a rubble patch.
+- Field: a ploughed plot with furrows and two rows of three plants (wheat, corn or pumpkins); harvest removes plants one
+  by one; a spent field is bare soil.
+- The meadow leaves room for each node (grass skips the node footprint; a chunk's grass is rebuilt once its nodes exist).
+
+**Measured.** Day at the default camera: 207 draw calls, 1.01 M triangles (was 215 / 0.97 M); night: 224 / 1.00 M.
+Checks: 52 tests, typecheck, lint and build pass.
+
+Captures: `compare-nodes.jpg` (top: before, bottom: after, same seed and moment), `nodes-close.jpg`.
+
+## Scorecard after the node pass
+
+| Category | Start | Now | Evidence |
+| --- | --- | --- | --- |
+| Art direction | 1.5 | 2 | |
+| Hero (castle) | 1.5 | 2 | |
+| Enemies | 1.5 | 2 | |
+| Interactables | 1 | 2 | role-specific clusters with ground cues; depletion readable as stumps, rubble and bare soil |
+| World | 1.5 | 2 | |
+| Materials | 1 | 2 | |
+| Lighting/render | 1.5 | 2 | |
+| VFX/motion | 1.5 | 2 | |
+| UI/HUD | 1.5 | 2 | |
+| Performance evidence | 1 | 2 | |
+
+Average 1.4 → 2.0; every category is now at 2, so no category blocks premium. Premium also needs an average of 2.3, which
+means about three categories at 3. The nearest candidates: Lighting (a sky dome and dusk light shafts), VFX (impact
+decals and readable ability telegraphs) and World (water, roads and denser mid-ground set dressing). A single authored
+character and building set remains the way past the mixed-pack ceiling on Art direction.

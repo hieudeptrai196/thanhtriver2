@@ -48,6 +48,14 @@ const COL = {
   sand: new THREE.Color(0x9c9060),
 };
 
+/** Where a resource node sits (grass leaves room for its ground). */
+export interface Clearing {
+  x: number;
+  z: number;
+  chunk: number;
+  type: string;
+}
+
 interface ChunkGrass {
   m: Float32Array; // 16 per clump
   c: Float32Array; // 3 per clump
@@ -93,10 +101,13 @@ export class Grass {
   }
 
   /** Refill when the camera crosses into another chunk (or the density changes); sway every frame. */
-  update(seed: number, camX: number, time: number, low: boolean): void {
+  update(seed: number, camX: number, time: number, low: boolean, nodes: readonly Clearing[] = []): void {
     this.uniforms.uTime.value = time;
     const c0 = Math.round(camX / L);
-    const key = `${seed}:${c0}:${low}`;
+    // Resource nodes get a clearing; a chunk is rebuilt once its nodes exist.
+    let nodeSig = 0;
+    for (const n of nodes) if (Math.abs(n.chunk - c0) <= RADIUS) nodeSig++;
+    const key = `${seed}:${c0}:${low}:${nodeSig}`;
     if (key === this.key) return;
     this.key = key;
     if (this.cache.size > 24) this.cache.clear();
@@ -105,7 +116,7 @@ export class Grass {
     let n = 0;
     for (let k = c0 - RADIUS; k <= c0 + RADIUS; k++) {
       const share = (Math.abs(k - c0) <= 1 ? 1 : 0.4) * (low ? 0.3 : 1);
-      const g = this.chunk(seed, k);
+      const g = this.chunk(seed, k, nodes);
       const take = Math.min(g.n, Math.floor(g.n * share));
       // Clumps are stored in random order, so the first `take` are an even thinning.
       mats.set(g.m.subarray(0, take * 16), n * 16);
@@ -117,8 +128,9 @@ export class Grass {
     this.mesh.instanceColor!.needsUpdate = true;
   }
 
-  private chunk(seed: number, chunk: number): ChunkGrass {
-    const key = `${seed}:${chunk}`;
+  private chunk(seed: number, chunk: number, nodes: readonly Clearing[]): ChunkGrass {
+    const mine = nodes.filter((n) => n.chunk === chunk);
+    const key = `${seed}:${chunk}:${mine.length}`;
     const hit = this.cache.get(key);
     if (hit) return hit;
     const m = new Float32Array(PER_CHUNK * 16);
@@ -139,6 +151,7 @@ export class Grass {
       const z = (h(2) * 2 - 1) * 46;
       const az = Math.abs(z);
       if (az < RAIL) continue;
+      if (mine.some((n) => Math.abs(n.x - x) < (n.type === 'bush' ? 1.1 : 0.95) && Math.abs(n.z - z) < (n.type === 'bush' ? 1.0 : 0.95))) continue;
       const cw = terrainWeight(seed, x, 'canyon');
       if (cw > 0.5 && az > BALANCE.world.canyonCliffZ - 0.5) continue;
       if (cw > 0.5 && h(3) > 0.45) continue; // thinner, dry tufts on the sandy canyon floor
