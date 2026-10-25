@@ -44,6 +44,8 @@ const PARAM_PREFIX: Record<string, string> = {
   struct: 'struct.',
   res: 'res.',
   skill: 'skill.',
+  dir: 'dir.',
+  doctrine: 'doctrine.',
 };
 
 export function t(key: MessageKey | string, params?: Record<string, string | number>): string {
