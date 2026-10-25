@@ -27,9 +27,6 @@ export type PropName =
   | 'rockB'
   | 'rockC'
   | 'mountain'
-  | 'hillsA'
-  | 'hillsB'
-  | 'peak'
   | 'groveA'
   | 'groveB';
 
@@ -44,7 +41,6 @@ export type DecorName =
   | 'mushroomTan'
   | 'bushSmall'
   | 'pebble'
-  | 'pebbleFlat'
   | 'log'
   | 'stumpOld'
   | 'campfire'
@@ -66,6 +62,7 @@ export const MED_SIZE = {
   hexTower: ['s', 1],
   hexRoof: ['s', 1],
   pennant: ['h', 1.8],
+  rubble: ['w', 1.6],
   ruinTrebuchet: ['w', 3.6],
   ruinRam: ['w', 2.8],
   ruinTower: ['w', 3.2],
@@ -75,6 +72,11 @@ export const MED_SIZE = {
   lantern: ['h', 1.4],
   bannerRed: ['h', 2.0],
   fenceBroken: ['w', 1.6],
+  fence: ['s', 1.6],
+  hedge: ['s', 1.6],
+  stall: ['w', 2.2],
+  treeCrooked: ['h', 4],
+  treeHigh: ['h', 4.6],
   wheel: ['h', 0.9],
   // Ultimate Fantasy RTS (Quaternius)
   house: ['w', 2.2],
@@ -94,7 +96,6 @@ export const MED_SIZE = {
   crates: ['w', 1.0],
   logs: ['w', 1.4],
   mill: ['h', 6],
-  farm: ['w', 5],
   mine: ['w', 4],
   towerHouse: ['h', 4.5],
   pines: ['w', 4.5],
@@ -120,7 +121,6 @@ const DECOR_SIZE: Record<DecorName, ['h' | 'w', number]> = {
   mushroomTan: ['h', 0.35],
   bushSmall: ['h', 0.55],
   pebble: ['w', 0.4],
-  pebbleFlat: ['w', 0.55],
   log: ['w', 1.4],
   stumpOld: ['h', 0.5],
   campfire: ['w', 1.0],
@@ -152,9 +152,6 @@ const PROP_SIZE: Record<PropName, ['h' | 'w', number]> = {
   rockB: ['w', 1.4],
   rockC: ['w', 1.3],
   mountain: ['w', 3.6],
-  hillsA: ['w', 10],
-  hillsB: ['w', 10],
-  peak: ['w', 12],
   groveA: ['w', 4.5],
   groveB: ['w', 4.5],
 };

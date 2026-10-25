@@ -4,7 +4,7 @@ import { isLit, lights, slotCount, SLOT_POS, type Sim } from '../sim/sim';
 import type { GameEvent, GameState, Vec } from '../sim/types';
 import { hash01 } from '../sim/rng';
 import { chunkCenter, chunkTerrain } from '../sim/world';
-import { Terrain, terrainHeight } from './terrain';
+import { chunkLayout, Terrain, terrainHeight, trackX } from './terrain';
 import {
   castleGeometry,
   cliffGeometry,
@@ -24,7 +24,11 @@ export interface Overlay {
 }
 
 // Medieval landmark models placed as countryside scenery.
-const LANDMARKS: MedName[] = ['windmill', 'mill', 'farm', 'cart', 'mine', 'towerHouse', 'pines', 'logs', 'ruinTrebuchet', 'ruinRam', 'ruinTower', 'wheel', 'fenceBroken'];
+const LANDMARKS: MedName[] = [
+  'windmill', 'mill', 'cart', 'mine', 'towerHouse', 'pines', 'logs', 'ruinTrebuchet', 'ruinRam', 'ruinTower', 'wheel', 'fenceBroken',
+  'house', 'house2', 'hut', 'storage', 'market', 'stall', 'barrel', 'crates', 'treeCrooked', 'treeHigh', 'fence', 'hedge',
+  'lantern', 'stoneNarrow', 'hexTower', 'rubble',
+];
 const MAX_POINT_LIGHTS = 6;
 // Height of the castle deck where archers stand once the KayKit castle is loaded.
 const WALL_WALK_Y = 1.9;
@@ -60,6 +64,12 @@ class Instanced {
   setModel(b: Baked): void {
     this.mesh.geometry = b.geo;
     this.mesh.material = b.materials;
+  }
+
+  /** Take the mesh out of the scene (its last instances would otherwise stay frozen in place). */
+  remove(): void {
+    this.mesh.removeFromParent();
+    this.mesh.dispose();
   }
 
   begin(): void {
@@ -368,7 +378,7 @@ export class GameRenderer {
     stumpGeo.translate(0, 0.15, 0);
     this.stumps = new Instanced(stumpGeo, new THREE.MeshLambertMaterial({ color: 0x806040 }), 800, this.scene);
     for (const t of ['wall', 'tower', 'torch'] as StructType[]) this.structs[t] = new Instanced(structGeometry(t), flat(), 300, this.scene);
-    this.blueprint = new Instanced(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0x80c0ff, transparent: true, opacity: 0.35, depthWrite: false }), 300, this.scene, false);
+    this.blueprint = new Instanced(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0xd8b878, transparent: true, opacity: 0.4, depthWrite: false }), 300, this.scene, false);
     this.cliffs = [new Instanced(cliffGeometry(), mat, 600, this.scene)];
 
     const glowMat = new THREE.MeshBasicMaterial({ map: glowTexture(), color: 0xffc898, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false });
@@ -435,15 +445,18 @@ export class GameRenderer {
     this.monsters.ranged.setModel(m.chars.ranged);
     this.monsters.boss.setModel(m.chars.brute);
     const max = 800;
+    // The code-built stand-ins go away: left in the scene they would keep showing where things were before loading.
+    for (const v of [...this.nodes.tree, ...this.nodes.rock, ...this.nodes.bush, ...this.cliffs]) v.remove();
     this.nodes.tree = [m.props.treeA, m.props.treeB].map((b) => new Instanced(b.geo, b.materials, max, this.scene));
     this.nodes.rock = [m.props.rockA, m.props.rockB, m.props.rockC].map((b) => new Instanced(b.geo, b.materials, max, this.scene));
     this.stumps.setModel(m.props.stump);
     this.structs.wall.setModel(m.props.fence);
     this.structs.tower.setModel(m.med.watch);
     this.cliffs = [m.props.mountain, m.props.rockA, m.props.rockC].map((b) => new Instanced(b.geo, b.materials, 600, this.scene));
-    this.scenery = [m.props.hillsA, m.props.hillsB, m.props.peak].map((b) => new Instanced(b.geo, b.materials, 80, this.scene));
+    // Far hillsides: pine stands and woods (not the hexagon-based hill tiles).
+    this.scenery = [m.med.pines, m.props.groveA, m.props.groveB].map((b) => new Instanced(b.geo, b.materials, 160, this.scene));
     this.groves = [m.props.groveA, m.props.groveB].map((b) => new Instanced(b.geo, b.materials, 120, this.scene));
-    for (const n of LANDMARKS) this.landmarks.set(n, new Instanced(m.med[n].geo, m.med[n].materials, 40, this.scene));
+    for (const n of LANDMARKS) this.landmarks.set(n, new Instanced(m.med[n].geo, m.med[n].materials, 120, this.scene));
     // Kenney Nature Kit: ground clutter (no shadows, it is small and plentiful) and crop fields for food.
     for (const [name, b] of Object.entries(m.decor) as [DecorName, Baked][]) {
       if (name === 'pumpkin' || name === 'wheat' || name === 'corn') continue;
@@ -451,7 +464,6 @@ export class GameRenderer {
       this.decor.set(name, new Instanced(b.geo, b.materials, big ? 120 : 3600, this.scene, big));
     }
     this.crops = [m.decor.pumpkin, m.decor.wheat, m.decor.corn].map((b) => new Instanced(b.geo, b.materials, 800, this.scene));
-    for (const v of this.nodes.bush) v.mesh.visible = false;
     this.nodes.bush = this.crops;
     this.decorKey = '';
     // Castle: a walled medieval keep on the code-built timber deck with wheels (Kenney Castle Kit + Quaternius).
@@ -765,7 +777,8 @@ export class GameRenderer {
       if (Math.random() < 0.3) this.particles.push({ x: c.x, y: this.keepTop, z: c.z, vx: 0.2, vy: 1.2, vz: 0, age: 0, life: 2.5, size: 0.6, grow: 0.8, color: 0x2a2a2e });
     }
     for (const l of this.lanterns) (l.material as THREE.MeshBasicMaterial).color.setHex(n > 0.3 ? 0xffe0a0 : 0xb08a3a);
-    this.fire.visible = c.fire > 0;
+    // The cone only stands in for the flame particles on the code-built fallback castle.
+    this.fire.visible = c.fire > 0 && !this.models;
     if (this.fire.visible) this.fire.scale.set(1, 0.8 + Math.sin(this.time * 18) * 0.2, 1);
 
     const ls = lights(s);
@@ -790,9 +803,12 @@ export class GameRenderer {
       const onWall = crowd.hasModel && u.type === 'archer' && Math.abs(u.x - c.x) < 3.3 && Math.abs(u.z - c.z) < 2.35;
       const bob = crowd.hasModel ? 0 : pose === 'act' ? Math.abs(Math.sin(this.time * 8 + u.id)) * 0.1 : 0;
       const size = (crowd.hasModel ? 1 : 1.35) * (u.type === 'shield' ? 1.12 : 1);
-      crowd.add(pose, this.time * (pose === 'move' ? 1.1 : 1.4) + u.id * 0.37, u.x, (onWall ? WALL_WALK_Y : 0) + bob, u.z, mo.rot, size, col);
-      if (u.type === selType) this.rings.add(u.x, onWall ? WALL_WALK_Y + 0.05 : 0.06, u.z, 0, 1, 1, 1, 0xfff080);
-      else if (s.selectedIds.includes(u.id)) this.rings.add(u.x, onWall ? WALL_WALK_Y + 0.05 : 0.06, u.z, 0, 1.1, 1, 1.1, 0x80f0ff);
+      // Archers on the castle stand behind the battlements, not inside the stone.
+      const ux = onWall ? c.x + Math.max(-2.7, Math.min(2.7, u.x - c.x)) : u.x;
+      const uz = onWall ? c.z + Math.max(-1.8, Math.min(1.8, u.z - c.z)) : u.z;
+      crowd.add(pose, this.time * (pose === 'move' ? 1.1 : 1.4) + u.id * 0.37, ux, (onWall ? WALL_WALK_Y : 0) + bob, uz, mo.rot, size, col);
+      if (u.type === selType) this.rings.add(ux, onWall ? WALL_WALK_Y + 0.05 : 0.06, uz, 0, 1, 1, 1, 0xfff080);
+      else if (s.selectedIds.includes(u.id)) this.rings.add(ux, onWall ? WALL_WALK_Y + 0.05 : 0.06, uz, 0, 1.1, 1, 1.1, 0x80f0ff);
     }
     this.drawCorpses(new Set(Object.values(this.units)));
     for (const type of UNIT_TYPES) this.units[type].end();
@@ -957,7 +973,7 @@ export class GameRenderer {
     const L = BALANCE.world.chunkLength;
     const pick: [DecorName, number][] = [
       ['grass', 30], ['grassLarge', 14], ['grassLeafs', 10], ['flowerRed', 5], ['flowerYellow', 6], ['flowerPurple', 5],
-      ['mushroomRed', 2], ['mushroomTan', 2], ['bushSmall', 6], ['pebble', 6], ['pebbleFlat', 5], ['log', 1], ['stumpOld', 1],
+      ['mushroomRed', 2], ['mushroomTan', 2], ['bushSmall', 6], ['pebble', 8], ['log', 1], ['stumpOld', 1],
     ];
     const total = pick.reduce((a, [, w]) => a + w, 0);
     for (let i = 0; i < 7; i++) {
@@ -1148,12 +1164,12 @@ export class GameRenderer {
   private placeScenery(seed: number, chunk: number, terrain: 'plains' | 'forest' | 'canyon'): void {
     const L = BALANCE.world.chunkLength;
     const x0 = chunkCenter(chunk) - L / 2;
-    for (let k = 0; k < 6; k++) {
+    for (let k = 0; k < 12; k++) {
       const h = (salt: number) => hash01(seed, chunk, k, salt);
-      const side = k % 2 === 0 ? -1 : 1;
-      const z = side * (37 + h(1) * 16);
+      const side = k % 3 === 0 ? 1 : -1;
+      const z = side * (42 + h(1) * 16);
       const v = this.scenery[Math.floor(h(2) * this.scenery.length)];
-      const sc = 0.8 + h(3) * 0.6;
+      const sc = 1.2 + h(3) * 0.8;
       const x = x0 + h(4) * L;
       v.add(x, terrainHeight(seed, x, z) - 0.3, z, h(5) * Math.PI * 2, sc, sc, sc, 0xffffff);
     }
@@ -1169,37 +1185,73 @@ export class GameRenderer {
     if (this.landmarks.size) this.placeLandmarks(seed, chunk, terrain);
   }
 
-  /** Medieval countryside beside the line: mills and fields, mines in the woods, wrecks of old sieges. */
+  /** Medieval countryside beside the line: villages with fields and a track to the railway, old ruins and siege wrecks. */
   private placeLandmarks(seed: number, chunk: number, terrain: 'plains' | 'forest' | 'canyon'): void {
-    if (terrain === 'canyon') return;
     const L = BALANCE.world.chunkLength;
     const x0 = chunkCenter(chunk) - L / 2;
     const h = (salt: number) => hash01(seed, chunk, 7, salt + 60);
-    const put = (name: MedName, x: number, z: number, rot: number, sc = 1) =>
-      this.landmarks.get(name)!.add(x, terrainHeight(seed, x, z) - 0.05, z, rot, sc, sc, sc, 0xffffff);
-    // North (far side, top of the screen): the tall landmark of the chunk.
-    const nx = x0 + 8 + h(1) * (L - 16);
-    const nz = -(31 + h(2) * 6);
-    if (terrain === 'plains') {
-      put(h(3) < 0.5 ? 'windmill' : 'mill', nx, nz, h(4) * 0.6 - 0.3);
-      put('farm', nx + 7, nz + 1.5, 0, 0.9);
-      put('cart', nx - 4, nz + 3, h(5) * 6);
-    } else {
-      put(h(3) < 0.5 ? 'mine' : 'towerHouse', nx, nz, h(4) * 0.6 - 0.3);
-      put('pines', nx + 6, nz - 1, h(5) * 6);
-      put('logs', nx - 3.5, nz + 3, h(6) * 6, 1.2);
+    const put = (name: MedName, x: number, z: number, rot: number, sc = 1, sy = sc) =>
+      this.landmarks.get(name)!.add(x, terrainHeight(seed, x, z) - 0.05, z, rot, sc, sy, sc, 0xffffff);
+    // Lantern posts along the far side of the line.
+    for (let x = Math.ceil(x0 / 12) * 12; x < x0 + L; x += 12) put('lantern', x + 0.5, -4.4, 0, 1.3);
+    if (terrain === 'canyon') {
+      if (h(1) < 0.6) put('ruinTower', x0 + h(2) * L, -8.5, h(3) * 6, 0.8);
+      return;
     }
-    // South (near the camera): only low things, so they never hide the camp.
-    if (terrain === 'plains' && h(7) < 0.6) put('farm', x0 + h(8) * L, 30 + h(9) * 5, 0, 0.8);
-    // An old battlefield: a wrecked siege engine with debris, on either side, now and then.
-    if (h(10) < 0.55) {
-      const side = h(11) < 0.5 ? -1 : 1;
-      const wx = x0 + h(12) * L;
-      const wz = side * (17 + h(13) * 9);
+    const v = chunkLayout(seed, chunk).village!;
+    const houses: MedName[] = v.kind === 'farm' ? ['house2', 'house', 'hut', 'storage', 'market'] : ['hut', 'house', 'storage'];
+    // Houses around a yard, facing the track that leads down to the railway.
+    const spots: [number, number][] = [[-5, -1.2], [-1.6, -3.6], [2.4, -2.8], [5.6, -0.6], [-4.2, 3.2]];
+    spots.forEach(([dx, dz], i) => {
+      if (i === 4 && h(20) < 0.5) return;
+      const name = houses[Math.floor(h(21 + i) * houses.length)];
+      put(name, v.x + dx, v.z + dz, Math.atan2(-dx, 6 - dz) + Math.PI + (h(30 + i) - 0.5) * 0.4, 1.55);
+    });
+    put('stall', v.x + 1.8, v.z + 1.6, Math.PI + h(40), 0.9);
+    put('barrel', v.x + 3.4, v.z + 2.2, 0, 1.2);
+    put('crates', v.x - 2.2, v.z + 2.4, h(41) * 6, 1.1);
+    put('treeCrooked', v.x - 8, v.z - 2 + h(42) * 2, h(43) * 6);
+    put('treeHigh', v.x + 8.5, v.z - 3, h(44) * 6);
+    // A fence (or hedge) on the near side of the village, with a gap for the track.
+    const fenceName: MedName = v.kind === 'farm' && h(45) < 0.5 ? 'hedge' : 'fence';
+    const fz = v.z + 4.8;
+    const gap = trackX(v, fz);
+    for (let fx = v.x - 7.2; fx < v.x + 7.2; fx += 1.6) {
+      if (Math.abs(fx + 0.8 - gap) < 1.4) continue;
+      put(fenceName, fx + 0.8, fz, 0);
+    }
+    if (v.kind === 'farm') {
+      put(h(3) < 0.5 ? 'windmill' : 'mill', v.x + (h(46) < 0.5 ? -11 : 11), v.z - 2.5, h(4) * 0.6 - 0.3);
+      put('cart', trackX(v, v.z + 9) + 1.6, v.z + 9, Math.PI / 2 + h(47) * 0.4);
+    } else {
+      put(h(3) < 0.5 ? 'mine' : 'towerHouse', v.x + (h(46) < 0.5 ? -10 : 10), v.z - 2, h(4) * 0.6 - 0.3);
+      put('pines', v.x - 12, v.z - 4, h(5) * 6);
+      put('logs', v.x + 4, v.z + 3, h(6) * 6, 1.2);
+    }
+    // Something from the old wars on the open ground, now and then.
+    const r = h(10);
+    const side = h(11) < 0.5 ? -1 : 1;
+    const wx = x0 + 6 + h(12) * (L - 12);
+    const wz = side * (16 + h(13) * 10);
+    if (r < 0.35) {
       const wreck: MedName[] = ['ruinTrebuchet', 'ruinRam', 'ruinTower'];
       put(wreck[Math.floor(h(14) * wreck.length)], wx, wz, h(15) * 6, side < 0 ? 1 : 0.8);
       put('wheel', wx + 2.2, wz + 1, h(16) * 6);
       put('fenceBroken', wx - 2.4, wz - 0.5, h(17) * 6);
+    } else if (r < 0.7) {
+      // A broken stretch of old curtain wall with a tower stump and rubble.
+      const rot = (h(18) - 0.5) * 0.8;
+      const ca = Math.cos(rot);
+      const sa = Math.sin(rot);
+      for (let i = 0; i < 5; i++) {
+        const tall = h(50 + i);
+        if (tall < 0.2) continue;
+        const along = (i - 2) * 1.3;
+        put('stoneNarrow', wx + along * ca, wz - along * sa, rot + Math.PI / 2, 1.3, 1.3 * (0.35 + tall * 0.65));
+      }
+      put('hexTower', wx + 3.6 * ca, wz - 3.6 * sa, h(19) * 6, 1.4, 0.8);
+      put('rubble', wx + 0.8, wz + 1.6 * side, h(56) * 6, 1.2);
+      put('rubble', wx - 2.6, wz + 1.2, h(57) * 6);
     }
   }
 

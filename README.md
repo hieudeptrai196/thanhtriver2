@@ -70,7 +70,10 @@ lên sàn thành. Lệnh tay đè lên việc tự động cho tới khi bấm *
   rồi chìm vào đất.
 - Phong cách trung cổ: tông màu đất, gỗ sẫm, đá xám, mái đỏ gỉ; giao diện gỗ – da – viền đồng, tiêu đề chữ Alegreya SC.
 - Lâu đài trên tàu có tường đá, cổng, 4 tháp góc và tháp chính (cao thêm một tầng ở tier 2); mỗi phòng hiện thành một
-  ngôi nhà nhỏ trên sàn (gỗ ở tier 1, đá ở tier 2). Ngoài đồng có cối xay gió, ruộng lúa, mỏ đá, xác máy công thành.
+  ngôi nhà nhỏ trên sàn (gỗ ở tier 1, đá ở tier 2). Mỗi đoạn đường có một làng nhỏ (nhà, chợ, hàng rào, cối xay) với
+  ruộng cày, ruộng lúa và đường đất xuống đường ray; ngoài đồng có tàn tích tường thành, xác máy công thành, đèn lồng
+  dọc tuyến, rừng thông trên đồi.
+- Ảnh chụp trong game: [docs/screenshots](docs/screenshots) (trận đánh đêm, boss, quái, nhân vật, lâu đài, làng).
 - **KayKit** của Kay Lousberg (CC0): nhân vật, xương khô, tường gỗ, cây, đá, đồi núi.
 - **Kenney** (CC0): Nature Kit (cỏ, hoa, nấm, sỏi, ruộng), Castle Kit (tường, tháp, tháp chính, xác máy công thành),
   Fantasy Town Kit (cối xay, xe kéo, đèn lồng, cờ).

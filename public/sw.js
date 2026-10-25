@@ -1,6 +1,6 @@
 // Offline cache (GDD v1.2 §18): pages are network-first so updates arrive, everything else is cache-first.
 // After the first full load the page tells us every asset it used, so the game then opens with no network.
-const CACHE = 'thanhtri-v3';
+const CACHE = 'thanhtri-v4';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(['./', './index.html', './manifest.webmanifest'])));

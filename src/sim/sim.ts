@@ -28,7 +28,7 @@ import {
   nightLength,
   waveCount,
 } from './difficulty';
-import { CASTLE, CLIFF, NavGrid, STRUCT } from './grid';
+import { CASTLE, CLIFF, FREE, NavGrid, STRUCT } from './grid';
 import { nextRandom, pickIndex, range, shuffle } from './rng';
 import type {
   Command,
@@ -1797,6 +1797,7 @@ export class Sim {
     }
     const reach = archer ? archerRange(s, u) : def.range;
     let anchor: Vec;
+    let rest: Vec | undefined; // where to stand when idle, if not the anchor itself
     let aggro = archer ? reach : def.aggro;
     let holdGround = false;
     let focus: Monster | undefined;
@@ -1809,6 +1810,11 @@ export class Sim {
       if (!g) u.order = null;
       anchor = g ?? { x: c.x, z: c.z };
       aggro = Math.max(aggro, 6);
+      if (u.order?.targetId === T_WALL) {
+        // Guarding the castle: stand at the wall on the side the unit is on.
+        const a = Math.atan2(u.z - c.z, u.x - c.x);
+        rest = { x: c.x + Math.cos(a) * (C.halfSize + 1.4), z: c.z + Math.sin(a) * (C.halfSize + 1.4) };
+      }
     } else if (u.order?.kind === 'hold') {
       anchor = u.order.pos;
       holdGround = true;
@@ -1825,7 +1831,8 @@ export class Sim {
       const a = this.guardAngle(u);
       anchor = { x: c.x + Math.cos(a) * (C.halfSize + 2.5), z: c.z + Math.sin(a) * (C.halfSize + 2.5) };
       if (s.phase === 'day') {
-        // By day idle melee protects the whole camp from stragglers.
+        // By day idle melee protects the whole camp from stragglers, standing around the castle.
+        rest = { x: c.x + Math.cos(a) * (C.halfSize + 1.6), z: c.z + Math.sin(a) * (C.halfSize + 1.6) };
         anchor = { x: c.x, z: c.z };
         aggro = BALANCE.difficulty.dayDefendRadius;
       }
@@ -1866,8 +1873,9 @@ export class Sim {
       }
     }
     u.job = 'guard';
-    if (archer && !u.order) this.walkTo(u, anchor.x, anchor.z, 0.3, true);
-    else this.walkTo(u, anchor.x, anchor.z, holdGround ? 0.3 : 0.6);
+    const home = rest ?? anchor;
+    if (archer && !u.order) this.walkTo(u, home.x, home.z, 0.3, true);
+    else this.walkTo(u, home.x, home.z, holdGround ? 0.3 : 0.6);
   }
 
   /** Where a guard order stands: a unit, a building, or the castle (-2). Null when the charge is gone. */
@@ -2258,9 +2266,9 @@ export class Sim {
     const nz = u.z + (dz / d) * step;
     if (collide) {
       const cell = this.grid.cellAt(nx, nz);
-      if (cell === STRUCT || cell === CLIFF) {
-        if (this.grid.cellAt(nx, u.z) !== STRUCT && this.grid.cellAt(nx, u.z) !== CLIFF) u.x = nx;
-        else if (this.grid.cellAt(u.x, nz) !== STRUCT && this.grid.cellAt(u.x, nz) !== CLIFF) u.z = nz;
+      if (cell !== FREE) {
+        if (this.grid.cellAt(nx, u.z) === FREE) u.x = nx;
+        else if (this.grid.cellAt(u.x, nz) === FREE) u.z = nz;
         return;
       }
     }
@@ -2303,17 +2311,54 @@ export class Sim {
       const rm = BALANCE.monsters[m.type].radius;
       for (const u of us) if (!u.inside) push(m, u, rm + BALANCE.unitRadius, 1, BALANCE.shove[u.type]);
     }
-    // Keep monsters out of blocked cells after pushing.
-    for (const m of ms) {
-      const c = this.grid.cellAt(m.x, m.z);
-      if (c === CLIFF || c === STRUCT) {
-        const k = this.grid.index(m.x, m.z);
-        const cx = this.grid.ox + (k % this.grid.size) + 0.5;
-        const cz = this.grid.oz + Math.floor(k / this.grid.size) + 0.5;
-        m.x += Math.sign(m.x - cx || 1) * 0.05;
-        m.z += Math.sign(m.z - cz || 1) * 0.05;
-      }
+    // Nobody ends up inside a wall, a cliff or the castle after pushing (stationed archers stand on the castle wall).
+    for (const m of ms) this.keepOut(m, BALANCE.monsters[m.type].radius);
+    for (const u of us) if (!u.inside && !(u.type === 'archer' && !u.order)) this.keepOut(u, BALANCE.unitRadius * 0.75);
+  }
+
+  /** Push a body of radius r out of blocked cells and out of the castle (its deck walls reach past the footprint). */
+  private keepOut(e: { x: number; z: number }, r: number): void {
+    const c = this.state.castle;
+    const hx = C.halfSize + 0.25 + r;
+    const hz = C.halfSize + r;
+    const dx = e.x - c.x;
+    const dz = e.z - c.z;
+    const px = hx - Math.abs(dx);
+    const pz = hz - Math.abs(dz);
+    if (px > 0 && pz > 0) {
+      if (px < pz) e.x = c.x + (dx < 0 ? -hx : hx);
+      else e.z = c.z + (dz < 0 ? -hz : hz);
     }
+    const g = this.grid;
+    const blocked = (x: number, z: number) => {
+      const v = g.cellAt(x, z);
+      return v === STRUCT || v === CLIFF;
+    };
+    // Deep inside a blocked cell: step out to the nearest free side.
+    if (blocked(e.x, e.z)) {
+      const fx = e.x - Math.floor(e.x);
+      const fz = e.z - Math.floor(e.z);
+      const opts: [number, number, number][] = [
+        [fx, -fx - r, 0],
+        [1 - fx, 1 - fx + r, 0],
+        [fz, 0, -fz - r],
+        [1 - fz, 0, 1 - fz + r],
+      ];
+      opts.sort((a, b) => a[0] - b[0]);
+      for (const [, ox, oz] of opts) {
+        if (!blocked(e.x + ox, e.z + oz)) {
+          e.x += ox;
+          e.z += oz;
+          return;
+        }
+      }
+      return;
+    }
+    // Touching a blocked neighbour: keep r away from its edge.
+    if (blocked(e.x + r, e.z)) e.x = Math.min(e.x, Math.floor(e.x + r) - r);
+    if (blocked(e.x - r, e.z)) e.x = Math.max(e.x, Math.floor(e.x - r) + 1 + r);
+    if (blocked(e.x, e.z + r)) e.z = Math.min(e.z, Math.floor(e.z + r) - r);
+    if (blocked(e.x, e.z - r)) e.z = Math.max(e.z, Math.floor(e.z - r) + 1 + r);
   }
 }
 
