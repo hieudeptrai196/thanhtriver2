@@ -1,95 +1,93 @@
 # Thành Trì: tóm tắt ý tưởng và lối chơi
 
-Cập nhật: 24/10/2026 · Repo: https://github.com/hieudeptrai196/thanhtriver2
+Cập nhật: 25/10/2026 · Repo: https://github.com/hieudeptrai196/thanhtriver2 · Thiết kế mục tiêu:
+[THANH_TRI_GDD_V1_2.md](THANH_TRI_GDD_V1_2.md)
 
-Thành Trì là game RTS sinh tồn chống quái trên trình duyệt (PC và điện thoại xoay ngang). Người chơi chỉ huy một ngôi
-làng sống quanh **một tòa thành biết chạy trên đường ray**. Ban ngày phát triển, ban đêm cố thủ. Game chơi vô tận và
-tính điểm bằng số đêm sống sót.
+Thành Trì là game RTS sinh tồn chống quái trên trình duyệt (PC trước, điện thoại xoay ngang song song). Người chơi
+lãnh đạo một ngôi làng sống quanh **một tòa thành chạy trên đường ray**: ban ngày xây kinh tế, ban đêm cố thủ, và mỗi
+sáng chọn giữ những gì đã xây hay đánh đổi để đi tiếp. Bản hiện tại là **prototype P0 của GDD v1.2**: đủ các vòng
+liên kết để chơi thử và đo, chưa phải nội dung đầy đủ.
 
-Bản hiện tại là **demo chơi được**, dùng để kiểm tra độ vui trước khi đầu tư tiếp. Tài liệu này giúp người mới vào nắm
-được ý tưởng cốt lõi, lối chơi, những gì đã làm và cách code được tổ chức.
+> "Chiến thắng không thuộc về người xây nhiều nhất, mà thuộc về người chọn đúng thứ cần giữ, đúng thứ phải bỏ và đúng
+> lúc phải lên đường."
 
 ---
 
 ## 1. Ý tưởng cốt lõi
 
-Điểm khác biệt duy nhất của game: **căn cứ của bạn di chuyển được**. Mỗi sáng người chơi phải đánh đổi giữa việc giữ
-chỗ đã phòng thủ kỹ và việc dời đi tìm tài nguyên mới.
+Bốn trụ cột (GDD v1.2 §0.2):
 
-Toàn bộ thiết kế phục vụ đúng **hai mục tiêu**. Tính năng nào không phục vụ hai mục tiêu này thì để sau.
-
-1. **Mỗi sáng người chơi thật sự phân vân giữa "ở lại" và "đi tiếp".**
-2. **Ban đêm căng nhưng không rối.**
-
-Các quyết định đã chốt:
+1. **Tòa thành di động:** ở hay đi là câu hỏi khó, không có đáp án cố định.
+2. **Kinh tế chuẩn bị cho chiến tranh, chiến tranh định hình kinh tế.**
+3. **Thắng bằng đọc tình hình và điều đội**, không phải bằng click nhanh.
+4. **Mỗi ván là một câu chuyện khác** nhờ seed, tuyến đường, kiểu đêm và lựa chọn của người chơi.
 
 | Câu hỏi | Quyết định |
 | --- | --- |
-| Thể loại | RTS sinh tồn chống quái, chơi đơn (PvE) |
-| Cấu trúc | Vô tận, không chia màn; điểm chính là số đêm sống sót |
-| Căn cứ | Một tòa thành duy nhất: nơi nộp tài nguyên, sinh quân, xây phòng, lên đời |
-| Di chuyển | Thành chỉ chạy được ban ngày; ban đêm bắt buộc đứng yên |
-| Nhân vật riêng | Không có. Người chơi ra lệnh cho nhóm quân hoặc từng con; quân rảnh tự làm việc mặc định |
-| Nền tảng | Trình duyệt, PC và điện thoại (xoay ngang); tiếng Việt mặc định, có tiếng Anh |
-| Chưa làm | Co-op, PvP, server, tài khoản |
+| Thể loại | RTS sinh tồn chống quái, chơi đơn, offline |
+| Chế độ | **Hành trình** 12 đêm có đích (chế độ chính), **Thử thách ngắn** 6 đêm, **Vô tận** |
+| Điều khiển | Không có anh hùng. Quân tự lo việc nhỏ; người chơi đặt ưu tiên kinh tế, điều đội, chọn từng con khi cần |
+| Không làm ở bản đầu | PvP, co-op, server, tài khoản, nâng chỉ số vĩnh viễn, kinh tế 15 loại nguyên liệu |
 
 ---
 
-## 2. Vòng chơi một ngày đêm
+## 2. Vòng chơi
 
 ```mermaid
 flowchart LR
-    A["BÌNH MINH<br/>dừng thời gian<br/>tổng kết, chọn thẻ,<br/>chọn ở lại / đi tiếp,<br/>tự động lưu"] --> B["NGÀY<br/>150s → 90s<br/>khai thác, xây, sinh quân,<br/>cho thành chạy"]
-    B --> C["HOÀNG HÔN<br/>20s<br/>báo hướng và quy mô quái,<br/>nông dân vào thành"]
-    C --> D["ĐÊM<br/>90s → 150s<br/>2–3 đợt quái,<br/>thành bắt buộc đứng yên"]
-    D -->|"sống sót: đêm sau khó hơn"| A
-    D -->|"lõi thành bị phá"| E["THUA<br/>hiện điểm, lưu điểm cao"]
+    A["BÌNH MINH<br/>dừng thời gian · báo cáo 3 ý<br/>học thuyết (một lần) · thẻ · ở lại / đi tiếp<br/>tự động lưu"] --> B["NGÀY<br/>khai thác theo ưu tiên, xây, sinh quân<br/>bấm Chạy để lên đường"]
+    B --> C["HOÀNG HÔN<br/>kế hoạch đêm chốt và lộ ra:<br/>kiểu đêm, hướng, mức đe doạ"]
+    C --> D["ĐÊM<br/>2–4 đợt, thành đứng yên<br/>điều đội, kỹ năng, khẩn cấp"]
+    D -->|"lõi còn"| A
+    D -->|"đủ số đêm của chế độ"| V["CHIẾN THẮNG"]
+    D -->|"lõi về 0"| E["THUA · điểm"]
 ```
 
-- Thời lượng thay đổi tuyến tính từ đêm 1 tới đêm 10 rồi giữ nguyên. Một vòng ngày đêm mất khoảng 4–5 phút.
-- Đêm chia 2 đợt (đêm 1–2) hoặc 3 đợt (từ đêm 3), giữa các đợt có quãng nghỉ khoảng 12 giây.
-- Mục tiêu cân bằng: người mới sống được 4–6 đêm, người khá 10–12 đêm. Bot tự chơi hiện sống trung bình 6,6 đêm.
+| Giai đoạn | Ngày | Hoàng hôn | Đêm |
+| --- | --- | --- | --- |
+| Đêm 1–2 | 150 giây | 20 giây | 100 giây |
+| Đêm 3–6 | 165 giây | 25 giây | 130 giây |
+| Đêm 7+ | 180 giây | 30 giây | 150 giây |
+
+Tạm dừng vẫn ra lệnh được; có tốc độ x2. Một vòng ngày đêm khoảng 4,5–6 phút.
 
 ---
 
-## 3. Quyết định mỗi sáng: ở lại hay đi tiếp
+## 3. Ở lại hay đi tiếp
 
-Mỗi bình minh có ba lựa chọn: **Ở lại**, hoặc tới **một trong 2 điểm dừng phía trước** trên đường ray.
+Mỗi bình minh có 3 phương án đặt cạnh nhau: **Ở lại**, **điểm dừng thứ 1**, **điểm dừng thứ 2**. Mỗi thẻ hiện địa
+hình, tài nguyên chính, lượng tài nguyên còn lại, số hướng quái, mức nguy hiểm, và thời gian chạy (đã tính tải trọng).
 
 | | Ở lại | Đi tiếp |
 | --- | --- | --- |
-| Lợi | Giữ tường, tháp, đuốc đã xây; không mất thời gian ban ngày; đã biết địa hình | Tài nguyên đầy; có thể gặp địa hình dễ thủ (hẻm núi chỉ 2 lối vào); đêm đầu ở vùng mới quái tới tối đa 2 hướng |
-| Hại | Tài nguyên cạn dần; đêm sau quái đánh **thêm 1 hướng** ("quái quen đường"); ở quá 2 đêm thì **đất kiệt**, tài nguyên ngừng hồi | Bỏ lại mọi công trình ngoài thành (thợ tháo kịp thì được hoàn 30%); mất 30–60 giây ban ngày để chạy |
+| Được | Giữ tường, tháp, đuốc; không mất thời gian | Tài nguyên đầy; có thể gặp hẻm núi dễ thủ; đêm đầu ở vùng mới tối đa 2 hướng |
+| Mất | Tài nguyên **hữu hạn, không hồi**; đêm sau **thêm 1 hướng**; từ đêm thứ 3 ở cùng chỗ, mỗi đêm thêm **12% quái** (quái nhận biết trại) | Bỏ công trình (thợ tháo kịp thì hoàn 30%); mất thời gian chạy; thành nặng thì chạy chậm, quá tải thì không chạy được |
 
-Thông tin trên mỗi thẻ lựa chọn: địa hình, tài nguyên chính, số hướng quái, mức nguy hiểm (1–5), lượng tài nguyên còn
-lại (với "Ở lại"), thời gian chạy (với "Đi tiếp"). Khi đất đã kiệt hoặc tài nguyên còn dưới 25%, thẻ "Ở lại" hiện
-cảnh báo đỏ.
-
-Áp lực "phải đi" đến từ ba nguồn: số hướng tấn công tăng, tài nguyên tại chỗ cạn (đứng yên mãi thì khoảng đêm 6–7 là
-hết sạch), và lương thực (mỗi quân ăn 1 lương thực mỗi sáng; thiếu thì cả làng mất 30% máu).
+Bot đo được: lối chơi thích nghi (Chiến thuật) không thua hai lối cứng nhắc; chi tiết ở mục 8.
 
 ---
 
 ## 4. Ban đêm: căng mà không rối
 
-| Nguyên tắc | Cách game làm |
-| --- | --- |
-| Biết trước | Lúc hoàng hôn, mũi tên ở mép màn hình chỉ hướng quái, kèm chữ "đông" hoặc "ít" |
-| Quân tự lo việc nhỏ | Lính tự đánh trong tầm; cung thủ tự lên sàn thành; thợ tự sửa chỗ hỏng nặng nhất và tự dập lửa |
-| Ít quyết định mà nặng | Mỗi đêm khoảng 3–5 quyết định lớn: dồn quân hướng nào, dùng kỹ năng lúc nào, bỏ chỗ nào |
-| Có nhịp thở | 2–3 đợt, nghỉ khoảng 12 giây giữa các đợt |
-| Nút cứu nguy | Kỹ năng thành: **Mưa tên** (sát thương vùng, hồi 60s), **Chuông triệu tập** (mọi quân về thành, hồi 20% máu, hồi 90s) |
-| Tạm dừng vẫn ra lệnh | Có, nhất là trên điện thoại |
-| Báo động | Tường thành sắp vỡ, tường đã vỡ, lõi dưới 30%, cháy mái |
+**Kế hoạch đêm chốt trước** lúc hoàng hôn, theo seed và tình trạng thế giới; người chơi làm gì sau đó cũng không đổi.
+Đêm 1–2 có một bài toán, từ đêm 3 ghép hai:
 
-**Tầm nhìn ban đêm:** màn hình tối. Chỉ thấy và chỉ bắn được quái nằm trong vùng sáng (quanh thành, đuốc, tháp tên,
-phòng tháp canh). Đặt đuốc ở đâu vì thế là một quyết định chiến thuật.
+| Kiểu | Bài toán | Người chơi cần làm |
+| --- | --- | --- |
+| Đột phá | 60% quân dồn một hướng, nhiều quái trâu | Giữ chặt cửa đó |
+| Quấy rối | Quái nhanh đánh sườn, săn thợ, nông dân, đuốc, tháp | Bảo vệ hoặc rút họ vào |
+| Gọng kìm | Hai hướng ngược nhau, đông ngang nhau | Chia đội hoặc chọn bỏ một phía |
+| Mưa đạn (từ đêm 3) | 40% quái bắn xa | Khiên đứng trước, đội cơ động đánh vào |
+| Bao vây (từ đêm 4) | 4 đợt nhỏ liên tiếp | Điều độ sửa chữa, giữ gỗ |
+| Boss | Đêm 5, 10 và đêm cuối của hành trình | Né vòng đỏ báo trước 1,6 giây |
 
-**Độ khó:**
-- Số quái mỗi đêm khoảng `20 × 1,25^(đêm − 1)`. Tối đa 80 quái sống cùng lúc; phần vượt được bù bằng quái trâu máu hơn.
-- Số hướng tấn công: 2 (đêm 1–2), 3 (đêm 3–6), 4 (từ đêm 7). Ở lại thì +1; vùng mới thì tối đa 2; địa hình giới hạn
-  thêm (hẻm núi chỉ 2).
-- Vùng càng xa thì tài nguyên càng nhiều và quái càng mạnh (+6% mỗi đoạn đường).
+- Hoàng hôn hiện băng "Đêm nay: …" kèm gợi ý, mũi tên mỗi hướng ghi **ít / vừa / đông**. Dự báo là **ước lượng**
+  (khoảng số quái), có phòng Tháp canh thì thành **xác nhận**.
+- Số quái khoảng `20 × 1,25^(đêm − 1)`, tối đa 80 sống cùng lúc. Số hướng: 2 (đêm 1–2), 3 (đêm 3–6), 4 (đêm 7+).
+- Chỉ thấy và bắn được quái trong vùng sáng (thành, đuốc, tháp).
+- **Khẩn cấp có trả giá:** Đóng cửa (mỗi đêm một lần: tường +35%, giảm nửa sát thương 20 giây; công trình ngoài mất
+  40% máu, thợ và nông dân ở trong tới sáng). Thẻ mở thêm Dân quân và Sửa khẩn.
+- **Báo cáo bình minh 3 ý:** Tổn thất; Điểm bẻ gãy (vỡ tường ở hướng nào, cháy mái, thợ bị bắt); Ngày tới cần gì.
 
 ---
 
@@ -97,162 +95,126 @@ phòng tháp canh). Đặt đuốc ở đâu vì thế là một quyết định
 
 ### Tòa thành
 
-- Có **lõi** (800 máu; về 0 là thua), **tường thành** (700 máu, đỡ đòn trước khi tới lõi) và **bánh xe** (150 máu;
-  hỏng thì không chạy được tới khi thợ sửa xong).
-- Là nơi duy nhất nộp tài nguyên, sinh quân, xây phòng và lên đời. Ban đêm nông dân vào thành trú.
-- **Lưới ô phòng:** đời 1 có 4 ô, đời 2 có 8 ô; thẻ "+1 ô" mở thêm, tối đa 12. Lên đời 2 tốn 200 gỗ, 100 đá, 50 vàng.
+- Lõi 800 (về 0 là thua), tường thành 700 (đỡ đòn trước), bánh xe 150 (hỏng thì không chạy được).
+- **Tải trọng:** phòng và hàng trong kho làm thành nặng. Nhẹ / Nặng (chậm 25%) / Rất nặng (chậm 50%) / Quá tải (không
+  chạy được, có nút bỏ bớt hàng). Kho tăng sức chở.
+- **Kho chứa:** tối đa 300 mỗi loại, +250 mỗi phòng Kho; giao vượt mức là mất.
+- **Lưới phòng:** đời 1 có 4 ô, đời 2 có 8 ô (200 gỗ, 100 đá, 50 vàng), tối đa 12.
 
 | Phòng | Chi phí | Tác dụng |
 | --- | --- | --- |
-| Nhà dân | 40 gỗ | +3 giới hạn dân, sinh nông dân |
-| Trại lính | 60 gỗ, 20 đá | Sinh lính giáo |
+| Nhà dân | 40 gỗ | +3 dân, sinh nông dân |
+| Trại lính | 60 gỗ, 20 đá | Sinh lính giáo và lính khiên |
 | Trường bắn (đời 2) | 60 gỗ | Sinh cung thủ |
-| Xưởng thợ | 50 gỗ | Sinh thợ, mở khoá công trình ngoài thành |
-| Tháp canh | 40 gỗ, 30 đá | Vùng sáng lớn hơn ban đêm, tự bắn tên |
+| Xưởng thợ | 50 gỗ | Sinh thợ, mở công trình ngoài thành |
+| Tháp canh | 40 gỗ, 30 đá | Sáng rộng, tự bắn, xác nhận dự báo đêm |
+| Kho | 50 gỗ | +250 chứa mỗi loại, +25 sức chở |
+| Bếp | 40 gỗ | Cả làng ăn ít đi 25% |
 
-**Cộng hưởng** (hai phòng đặt kề cạnh nhau trong lưới): Trại lính cạnh Xưởng thợ thì lính giáo +15% máu; Tháp canh
-cạnh Trường bắn thì cung thủ +20% tầm.
+Cộng hưởng (kề cạnh): Trại lính + Xưởng thợ → lính giáo +15% máu; Tháp canh + Trường bắn → cung thủ +20% tầm;
+Bếp + Nhà dân → sinh nông dân nhanh hơn 30%; Kho + Xưởng thợ → công trình ngoài rẻ hơn 15%.
 
-### Công trình ngoài thành
+**Học thuyết** (chọn một lần, sau đêm 2):
 
-Thợ xây; chỉ xây được khi thành đang đứng yên và đã có Xưởng thợ.
-
-| Công trình | Chi phí | Tác dụng |
+| | Được | Mất |
 | --- | --- | --- |
-| Tường gỗ | 10 gỗ | Chặn đường; quái phải đập hoặc đi vòng (tường ngắn thì đi vòng, tường dài thì đập) |
-| Tháp tên | 40 gỗ, 15 đá | Tự bắn quái trong vùng sáng |
-| Đuốc | 8 gỗ | Tạo vùng sáng |
+| Pháo đài | Công trình +40% máu, tháp +25% sát thương, tường +20% | Thành nặng hơn 25%, chậm 15%, tháo chỉ hoàn một nửa |
+| Đoàn hành quân | Tháo nhanh gấp đôi, hoàn gấp đôi, sức chở +40%, nhanh 25% | Công trình −25% máu, tháp −15%, tường −10% |
 
-### Quân
+### Kinh tế
 
-Quy mô khoảng 10–30 đơn vị; giới hạn dân là 10 cộng 3 cho mỗi Nhà dân. Quân chết là mất hẳn. Khởi đầu với 4 nông dân,
-1 thợ, 3 lính giáo, phòng Nhà dân và Xưởng thợ.
+- Gỗ (cây), đá (mỏ), lương thực (ruộng bí ngô, lúa mì, ngô): hữu hạn, không hồi. Vàng: rơi từ quái.
+- **Bảng Kinh tế** (K): ưu tiên Tắt/Thấp/Vừa/Cao cho Lương thực, Gỗ, Đá. AI tự chia nông dân theo ưu tiên, nhu cầu
+  (lương thực x2 khi dưới 2 sáng) và tồn kho. Hiện sản lượng mỗi phút, số người làm, lượng còn quanh trại.
+- Hàng chỉ cộng vào kho khi **nộp**. Nông dân chết khi đang vác thì hàng rơi tại chỗ, nhặt lại được trong 120 giây.
+- Mỗi sáng mỗi người ăn 1 lương thực (có Bếp thì ít hơn). Thanh trên hiện **"đủ N sáng"**. Thiếu lần đầu: cả làng
+  yếu đi (chậm, đánh yếu 20%); thiếu lần hai liên tiếp: yếu 40% và một người bỏ đi.
+- **Sửa chữa tốn gỗ** (0,05 gỗ mỗi máu). Thợ ưu tiên: sửa tường khẩn cấp (dưới 35%) > dập lửa > xây > sửa ngoài.
 
-| Nhóm | Lệnh | Tự làm khi rảnh |
-| --- | --- | --- |
-| Nông dân | Cắm cờ khai thác; về thành | Khai thác chỗ gần nhất còn trữ lượng, ưu tiên loại tài nguyên đang thiếu trong kho; đêm thì vào thành |
-| Thợ | Xây; sửa (ưu tiên); tháo | Dập lửa, xây bản vẽ, tháo chỗ đã đánh dấu, rồi sửa thứ hỏng nặng nhất (tường thành, bánh xe, công trình) |
-| Lính giáo | Tập trung / giữ vị trí | Canh phía quái sẽ tới; ban ngày đuổi quái lẻ trong bán kính 18 quanh thành |
-| Cung thủ | Tập trung | Đứng trên sàn thành (được cộng tầm bắn) |
+### Quân và chỉ huy
+
+| Quân | Vai trò |
+| --- | --- |
+| Nông dân | Khai thác, vác về; ban đêm vào thành |
+| Thợ | Xây, sửa, tháo, dập lửa |
+| Lính giáo | Chặn cửa, đánh cận chiến |
+| Lính khiên | Máu 190, đỡ nửa sát thương tên bắn, **không bị đẩy lùi**: chắn đường quái |
+| Cung thủ | Bắn từ tuyến sau, cần vùng sáng; đứng trên sàn thành được cộng tầm |
+
+- **Đội 1–5:** lính mới tự vào đội mặc định (giáo 1, khiên 2, cung 3); phím số chọn đội, Ctrl+số gán.
+- **Lệnh:** Di chuyển (linh hoạt), Giữ vị trí (không đuổi), Bảo vệ (một quân, công trình hoặc thành), Tập trung (một
+  con quái; chuột phải vào quái), Rút lui (về thành, không đánh), Tự động lại.
+- **Đội hình:** Tuyến chắn (khiên, giáo trước; cung sau 1,8 ô) hoặc Vòng tròn.
+- **Chắn đường thật:** quân cản quái; mỗi quân chỉ bị tối đa 3 quái cận chiến đánh cùng lúc, nên cửa hẹp có giá trị.
+- **Sát thương:** thường / xuyên (tên) / công thành (quái trâu, boss).
 
 ### Quái
 
 | Loại | Từ đêm | Hành vi |
 | --- | --- | --- |
-| Quái nhanh | 1 | Nhắm nông dân và thợ; ban ngày có vài con lẻ (từ ngày 2) |
+| Quái nhanh | 1 | Săn nông dân và thợ; trong Quấy rối thì săn cả đuốc và tháp |
 | Quái trâu | 1 | Đập tường, công trình, tòa thành |
-| Quái bắn xa | 3 | Đứng xa bắn quân |
-| Boss | 5, 10, 15… | Rất trâu; đập diện rộng có vòng đỏ báo trước khoảng 1,6 giây |
+| Quái bắn xa | 3 | Bắn quân từ xa (khiên đỡ được) |
+| Boss | 5, 10, đêm cuối | Đập diện rộng có báo trước |
 
-Quái tìm đường bằng "bản đồ khoảng cách" tới thành (flow field); tường làm đường đắt hơn chứ không chặn hẳn.
+### Thẻ (mỗi bình minh chọn 1 trong 3, thẻ nào cũng có giá)
 
-### Tài nguyên, thẻ, sự kiện
-
-- **Gỗ** (cây), **đá** (mỏ), **lương thực** (bụi quả): có trữ lượng hữu hạn. **Vàng**: rơi từ quái và boss.
-- **Thẻ nâng cấp** (mỗi sáng chọn 1 trong 3, có 10 loại): lính +20% máu, tháp bắn nhanh +25%, thành chạy nhanh gấp đôi,
-  nông dân mang +50%, đuốc sáng rộng +30%, tường và công trình bền +30%, xây và sửa nhanh gấp đôi, +1 ô phòng,
-  cung thủ +25% sát thương, hồi 40% lõi.
-- **Sự kiện:** cháy mái ban đêm (từ đêm 2, xác suất 45%; thợ phải dập, nếu không lõi mất máu dần); người lạ xin gia
-  nhập ban ngày (50%; thêm 1 nông dân và 1 lính giáo nếu còn chỗ).
+Lính cứng cáp, Cung nhanh, Trục bôi mỡ, Gùi lớn, Ánh sáng dẫn đường, Tường dày, Tháo nhanh, Cánh thành mới,
+Tên có ngạnh, Vá lõi (chỉ khi lõi dưới 70%), Lực lượng dự bị (mở Dân quân), Chặn ngả, Kho gọn nhẹ, Sửa khẩn (mở kỹ
+năng). Ví dụ: "Cung nhanh: tháp bắn nhanh 25% · tháp tốn thêm 10 gỗ".
 
 ### Thế giới
 
-Một con đường ray thẳng, dài vô tận, chia thành các đoạn 48 ô, sinh theo seed (cùng seed thì ra cùng thế giới).
-
-| Địa hình | Tài nguyên | Phòng thủ |
-| --- | --- | --- |
-| Đồng bằng | Nhiều lương thực | Quái tới từ 4 hướng |
-| Rừng | Nhiều gỗ | 4 hướng |
-| Hẻm núi | Ít, chủ yếu đá | Vách núi hai bên, chỉ 2 hướng vào, dễ thủ |
+Đường ray thẳng vô tận, chia đoạn 48 ô, sinh theo seed. Đồng bằng (nhiều lương thực, 4 hướng), Rừng (nhiều gỗ),
+Hẻm núi (ít tài nguyên, chỉ 2 hướng vào). Càng xa càng giàu và càng nguy hiểm.
 
 ### Điểm và lưu
 
-- Điểm = số đêm × 100 + số quái hạ + số boss × 500. Bảng điểm cao lưu trên máy.
-- Tự lưu mỗi bình minh vào localStorage; menu có "Chơi tiếp".
+Điểm = đêm × 100 + quái hạ + boss × 500 (+1000 khi hoàn thành chế độ). Tự lưu mỗi bình minh; bảng điểm cao ghi chế độ.
 
 ---
 
-## 6. Điều khiển
+## 6. Điều khiển và chế độ tự động
 
-Ngoài lệnh theo nhóm, người chơi có thể **chọn từng con kiểu Đế Chế** để chỉnh chỗ cần đông người hơn: quân được chọn
-nhận lệnh riêng, dàn đội hình quanh điểm đích, và trở về việc tự động khi bấm "Tự động lại". Nút **Auto** cho AI chơi
-thay toàn bộ để người chơi quan sát; vẫn chọn quân tay được trong lúc Auto.
-
-| Thao tác | PC | Điện thoại (xoay ngang) |
-| --- | --- | --- |
-| Camera | WASD / mũi tên / kéo chuột giữa; lăn chuột để phóng to | Kéo một ngón; chụm hai ngón |
-| Chọn nhóm | Phím 1–4 hoặc thanh nhóm | Chạm thanh nhóm |
-| Chọn từng con | Kéo chuột trái quét khung; bấm vào một con; Shift để chọn thêm | Nút "Chọn" rồi kéo khung; chạm vào một con |
-| Ra lệnh | Chuột phải vào vị trí | Chạm vị trí sau khi chọn |
-| Ô phòng | Bấm vào thành / Tab | Chạm thành / nút Thành |
-| Xây ngoài thành | B | Nút Xây (chạm xem trước, chạm lần nữa để đặt) |
-| Chạy / Dừng (chỉ ban ngày) | Space | Nút Chạy |
-| Gọi tất cả về | H | Nút Gọi về |
-| Kỹ năng | Q Mưa tên, E Chuông triệu tập | Nút kỹ năng |
-| Auto | O | Nút Auto |
-| Tạm dừng | P / Esc | Nút tạm dừng |
+- Việc nhỏ quân luôn tự lo (tương ứng Auto-Work và Auto-Defend của GDD, luôn bật).
+- **AI chơi thay** (O) là bot trình diễn riêng: tự chọn tuyến, thẻ, học thuyết, xây, sinh quân, dùng kỹ năng.
+- Phím đầy đủ xem `README.md`. Trên điện thoại mọi thao tác có nút; màn dưới 1100px thì nút chỉ hiện biểu tượng.
 
 ---
 
-## 7. Bản demo đã có gì, còn thiếu gì so với thiết kế
+## 7. Đồ hoạ
 
-**Đã có và chơi được:** trọn vòng ngày, hoàng hôn, đêm, bình minh lặp vô tận; quyết định ở lại hay đi tiếp kèm cơ chế
-đất kiệt; thành chạy trên ray, công trình bị bỏ lại hoặc hoàn 30%; 5 phòng có cộng hưởng; đời 1–2; 10 thẻ; 2 kỹ năng;
-2 sự kiện; 4 loại quái kèm boss; 3 địa hình; ánh sáng và tầm nhìn ban đêm; lưu và chơi tiếp; điểm cao; tiếng Việt và
-tiếng Anh; PC và cảm ứng; chế độ Auto; chọn quân kiểu Đế Chế; đồ hoạ KayKit; cài được lên màn hình chính (PWA).
-
-**Có trong tài liệu thiết kế nhưng chưa làm:**
-
-| Mảng | Chưa làm |
-| --- | --- |
-| Tòa thành | Đời 3 (12 ô, lò rèn cấp 2); phòng Lò rèn, Kho, Bếp; kỵ binh; kỹ năng thứ 3 "Đuốc lớn" |
-| Quái | Quái kéo người (đêm 6), quái phá công trình (đêm 8), quái bay hoặc đào (đêm 11); boss đêm 10 gọi thêm quái |
-| Địa hình | Ven sông, làng bỏ hoang, đất chết |
-| Sự kiện | Thùng tiếp tế, dân gặp nạn, gãy bánh xe ban đêm, đêm dài |
-| Ở lại | Công trình xuống cấp 15% mỗi đêm nếu không sửa |
-| Tiến trình | Dùng điểm để mở khoá thẻ, phòng, quân và điều kiện khởi đầu giữa các ván |
-| Điều khiển | Cuộn camera khi đưa chuột ra mép màn hình |
+KayKit (Kay Lousberg) cho nhân vật, quái, thành, tháp, cây, đá, đồi núi; Kenney Nature Kit cho cỏ, hoa, nấm, ruộng;
+địa hình low-poly liền mạch, đường ray, đuốc dựng bằng code; bóng đổ mặt trời tự tắt khi máy yếu. Hoạt ảnh được
+"nướng" thành vài khung hình tĩnh để vẽ hàng loạt. Ghi công đầy đủ: [CREDITS.md](../CREDITS.md).
 
 ---
 
-## 8. Kỹ thuật và cách phát triển tiếp
+## 8. Hiện trạng và việc tiếp theo
 
-**Công nghệ:** Vite, TypeScript (strict), Three.js. Không dùng game engine. Site tĩnh, deploy được lên Vercel.
+**Đã có (P0 của GDD v1.2):** mọi mục ở trên, cộng hash trạng thái, log mỗi đêm (`history`), 3 bot policy, chơi
+offline (Service Worker), lưu cũ vẫn tải được, 50 test.
 
-```mermaid
-flowchart LR
-    Input["src/input<br/>chuột, phím, cảm ứng"] -->|Command| Sim
-    Bot["src/sim/bot.ts<br/>bot chỉ huy (Auto, test, npm run sim)"] -->|Command| Sim
-    Data["src/data/balance.ts<br/>mọi con số và nội dung"] --> Sim
-    Sim["src/sim<br/>simulation thuần TS<br/>bước cố định 60 Hz, RNG có seed"] -->|GameEvent| UI["src/ui<br/>HUD bằng DOM"]
-    Sim -->|GameEvent| Audio["src/audio<br/>âm thanh WebAudio"]
-    Sim -->|state, chỉ đọc| Render["src/render<br/>Three.js, InstancedMesh"]
-    Sim -->|JSON mỗi bình minh| Save["localStorage"]
-```
+**Số đo gần nhất** (`npm run sim -- --seeds 8`): trung vị Bám trụ 7 đêm, Du mục 6, Chiến thuật 7. Ba lối vẫn sát
+nhau; GDD §16.4 yêu cầu chạy 100 seed mỗi policy và playtest có quan sát để chỉnh tiếp.
+
+**Chưa làm (P1 trở đi):** world graph có nhánh, trinh sát và độ tin cậy dự báo theo trinh sát, nhiệm vụ chủ động ban
+ngày, biome Bờ sông và Tàn tích, sắt, kỵ binh và trinh sát viên, học thuyết Quân giới, checkpoint giữa đêm, IndexedDB,
+playtest 12–20 buổi.
+
+---
+
+## 9. Kỹ thuật
 
 | Thư mục / file | Vai trò |
 | --- | --- |
-| `src/sim/` | Luật chơi. Không import DOM hay Three.js. Nhận mảng `Command`, phát ra `GameEvent`. Cùng seed và cùng chuỗi lệnh thì ra cùng kết quả |
-| `src/sim/sim.ts` | Vòng lặp chính: pha ngày đêm, AI quân, quái, chiến đấu, xây, lưu |
-| `src/sim/grid.ts` | Lưới điều hướng 80×80 ô quanh thành; A* có cache cho quân; flow field cho quái |
-| `src/sim/world.ts` | Sinh các đoạn đường và tài nguyên theo seed |
-| `src/data/balance.ts` | **File duy nhất chứa mọi con số** để chỉnh cân bằng |
-| `src/render/` | Vẽ bằng Three.js; model KayKit được "nướng" thành vài khung hình tĩnh để vẽ hàng loạt |
-| `src/ui/`, `src/input/`, `src/i18n/` | HUD, điều khiển, chữ hiển thị (`en.ts` định nghĩa khoá, `vi.ts` phải đủ mọi khoá) |
-| `public/models/` | Model KayKit đã cắt gọn (CC0, Kay Lousberg; xem `CREDITS.md`) |
+| `src/sim/` | Luật chơi thuần TS, bước 60 Hz, RNG có seed, tất định; nhận `Command`, phát `GameEvent` |
+| `src/data/balance.ts` | **File duy nhất chứa mọi con số** |
+| `src/sim/bot.ts` | 3 bot policy cho đo cân bằng và AI chơi thay |
+| `src/render/` | Three.js: `terrain.ts`, `models.ts`, `renderer.ts` |
+| `src/ui/`, `src/input/`, `src/i18n/` | HUD, điều khiển, chữ (`vi.ts` phải đủ mọi khoá của `en.ts`) |
+| `public/models/`, `public/sw.js` | Model đã cắt gọn; Service Worker offline |
 
-**Lệnh hay dùng:**
-
-| Lệnh | Việc |
-| --- | --- |
-| `npm install && npm run dev` | Chạy bản phát triển |
-| `npm run check` | Typecheck, lint, 33 test, build; phải xanh trước khi đẩy code |
-| `npm run sim` | Bot tự chơi 10 seed, in số đêm trung bình (mục tiêu 5–8, hiện 6,6) |
-| `?speed=4`, `?seed=123`, `?fps=1`, `?lang=en` | Tham số URL để thử nhanh, cố định seed, xem FPS, đổi ngôn ngữ |
-
-**Quy ước khi làm tiếp:**
-- Mọi con số mới cho vào `src/data/balance.ts`; không viết chữ hiển thị trực tiếp trong code (thêm khoá vào `en.ts` và
-  `vi.ts`).
-- Giữ simulation tất định: chỉ dùng RNG trong state, không dùng `Math.random` hay thời gian thực trong `src/sim/`.
-- Đổi luật chơi thì chạy `npm run sim` để xem cân bằng còn nằm trong 5–8 đêm không.
-- Các quyết định đã tự đưa ra khi đặc tả để ngỏ được ghi trong mục "Quyết định tự đưa ra" của `README.md`.
+Quy ước: số mới vào `balance.ts`; chữ mới vào `en.ts` và `vi.ts`; không dùng `Math.random` hay thời gian thực trong
+`src/sim/`; đổi luật thì chạy `npm run check` và `npm run sim`; mỗi tính năng phải có Command/Event, test, phản hồi
+trên HUD và một số đo (GDD §21.1).

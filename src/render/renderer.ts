@@ -381,8 +381,8 @@ export class GameRenderer {
   }
 
   /** Starts loading the KayKit models; until then (or if loading fails) the code-built shapes are used. */
-  loadModels(): void {
-    loadModels()
+  loadModels(): Promise<void> {
+    return loadModels()
       .then((m) => this.applyModels(m))
       .catch((e: unknown) => console.warn('models not loaded, using built-in shapes', e));
   }

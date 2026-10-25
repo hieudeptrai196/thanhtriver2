@@ -15,8 +15,9 @@ export const en = {
   'menu.rotate': 'Please rotate your device to landscape',
   'menu.credits': 'Credits',
   'credits.models': '3D models: KayKit by Kay Lousberg (www.kaylousberg.com), CC0 – Adventurers Character Pack, Skeletons Character Pack, Medieval Hexagon Pack.',
-  'credits.code': 'Torches, bushes, effects, interface and sounds made for this game. Built with three.js and Vite.',
-  'credits.thanks': 'Thank you, Kay!',
+  'credits.kenney': 'Ground decoration and crop fields: Nature Kit by Kenney (www.kenney.nl), CC0.',
+  'credits.code': 'Terrain, railway, torches, effects, interface and sounds made for this game. Built with three.js and Vite.',
+  'credits.thanks': 'Thank you, Kay and Kenney!',
   'menu.seed': 'Seed {seed}',
 
   'help.1': 'You command a village living around one walking castle. You have no hero: give orders to groups.',

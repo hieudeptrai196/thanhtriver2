@@ -15,8 +15,9 @@ export const vi: Record<MessageKey, string> = {
   'menu.rotate': 'Hãy xoay ngang điện thoại',
   'menu.credits': 'Ghi công',
   'credits.models': 'Mô hình 3D: KayKit của Kay Lousberg (www.kaylousberg.com), giấy phép CC0 – Adventurers Character Pack, Skeletons Character Pack, Medieval Hexagon Pack.',
-  'credits.code': 'Đuốc, bụi quả, hiệu ứng, giao diện và âm thanh được làm riêng cho game. Xây dựng bằng three.js và Vite.',
-  'credits.thanks': 'Cảm ơn Kay!',
+  'credits.kenney': 'Trang trí mặt đất và ruộng: Nature Kit của Kenney (www.kenney.nl), giấy phép CC0.',
+  'credits.code': 'Địa hình, đường ray, đuốc, hiệu ứng, giao diện và âm thanh được làm riêng cho game. Xây dựng bằng three.js và Vite.',
+  'credits.thanks': 'Cảm ơn Kay và Kenney!',
   'menu.seed': 'Seed {seed}',
 
   'help.1': 'Bạn chỉ huy một ngôi làng sống quanh một tòa thành biết đi. Không có nhân vật riêng: bạn ra lệnh cho các nhóm quân.',

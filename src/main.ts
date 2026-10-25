@@ -19,7 +19,7 @@ const debugSpeed = Math.max(1, Math.min(16, Number(params.get('speed') ?? 1) || 
 const app = document.getElementById('app')!;
 const canvas = document.getElementById('scene') as HTMLCanvasElement;
 const renderer = new GameRenderer(canvas);
-renderer.loadModels();
+const modelsReady = renderer.loadModels();
 if (noShadows) renderer.setShadows(false);
 if (import.meta.env.DEV) (window as unknown as { renderer: GameRenderer }).renderer = renderer;
 const audio = new Audio();
@@ -244,7 +244,7 @@ function showMenu(view: 'main' | 'scores' | 'help' | 'credits' | 'mode' = 'main'
     box.append(list);
   } else {
     const list = el('div', 'help');
-    list.append(el('p', '', t('credits.models')), el('p', '', t('credits.code')), el('p', '', t('credits.thanks')));
+    list.append(el('p', '', t('credits.models')), el('p', '', t('credits.kenney')), el('p', '', t('credits.code')), el('p', '', t('credits.thanks')));
     box.append(list);
   }
   if (view !== 'main') {
@@ -298,3 +298,22 @@ function loop(now: number): void {
 
 showMenu();
 requestAnimationFrame(loop);
+
+// Offline play after the first visit (production builds only).
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register(`${import.meta.env.BASE_URL}sw.js`)
+      .then(async (reg) => {
+        await navigator.serviceWorker.ready;
+        await modelsReady;
+        // Hand the worker every same-origin file this page loaded, plus the models.
+        const used = performance
+          .getEntriesByType('resource')
+          .map((e) => e.name)
+          .filter((u) => u.startsWith(location.origin));
+        reg.active?.postMessage({ type: 'precache', urls: used });
+      })
+      .catch(() => undefined);
+  });
+}
