@@ -12,7 +12,7 @@ const KEYS = {
 export class Sky {
   readonly mesh: THREE.Mesh;
   readonly horizon = new THREE.Color();
-  private uniforms = {
+  readonly uniforms = {
     uTop: { value: new THREE.Color() },
     uHorizon: { value: new THREE.Color() },
     uSunColor: { value: new THREE.Color() },

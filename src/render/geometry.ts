@@ -324,3 +324,42 @@ export function campfireGeometry(): THREE.BufferGeometry {
   }
   return mergeGeometries(parts)!;
 }
+
+/** A clump of reeds with two bulrush heads, about 1.1 tall; vertex-coloured, green at the root fading to straw. */
+export function reedGeometry(): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const col: number[] = [];
+  const lo = new THREE.Color(0x4e6a32);
+  const hi = new THREE.Color(0xa8a060);
+  const c = new THREE.Color();
+  for (let i = 0; i < 9; i++) {
+    const a = i * 2.39996;
+    const r = 0.12 + (i % 3) * 0.06;
+    const bx = Math.cos(a) * r;
+    const bz = Math.sin(a) * r;
+    const h = 0.75 + ((i * 37) % 10) * 0.04;
+    const lean = 0.18 + (i % 4) * 0.05;
+    const tx = bx + Math.cos(a) * lean;
+    const tz = bz + Math.sin(a) * lean;
+    const w = 0.035;
+    const px = -Math.sin(a) * w;
+    const pz = Math.cos(a) * w;
+    // A tapered blade: two triangles, both faces.
+    const quad = [
+      [bx - px, 0, bz - pz], [bx + px, 0, bz + pz], [tx, h, tz],
+      [bx + px, 0, bz + pz], [bx - px, 0, bz - pz], [tx, h, tz],
+    ];
+    for (const v of quad) {
+      pos.push(v[0], v[1], v[2]);
+      c.copy(lo).lerp(hi, v[1] / h);
+      col.push(c.r, c.g, c.b);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.computeVertexNormals();
+  const heads = [0.6, -0.4].map((a, i) => painted(new THREE.CylinderGeometry(0.035, 0.035, 0.18, 5).translate(Math.cos(a) * 0.2, 0.92 + i * 0.08, Math.sin(a) * 0.2), 0x5a3a22));
+  const stalks = [0.6, -0.4].map((a, i) => painted(new THREE.CylinderGeometry(0.008, 0.008, 0.9, 3).translate(Math.cos(a) * 0.2, 0.45 + i * 0.04, Math.sin(a) * 0.2), 0x7a8a48));
+  return mergeGeometries([g, ...heads, ...stalks])!;
+}

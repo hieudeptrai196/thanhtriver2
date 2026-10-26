@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { BALANCE } from '../data/balance';
 import { hash01 } from '../sim/rng';
 import { chunkCenter } from '../sim/world';
-import { chunkLayout, noise, smooth, terrainHeight, terrainWeight, trackX } from './terrain';
+import { chunkLayout, pondInside, noise, smooth, terrainHeight, terrainWeight, trackX } from './terrain';
 
 // A meadow carpet: thousands of cheap blade clumps (7 triangles each) in one InstancedMesh, swaying in the wind.
 // Short around the camp so units stay readable, taller towards the edges and in patches, golden in the wheat fields.
@@ -158,6 +158,7 @@ export class Grass {
       // Keep the village track and the ploughed strips bare, thin out the trodden yard.
       if (v && z > v.z + 1 && z < -RAIL && Math.abs(x - trackX(v, z)) < 1) continue;
       if (v && Math.hypot(x - v.x, (z - v.z) * 1.3) < 6 && h(4) > 0.25) continue;
+      if (pondInside(seed, x, z) > 0.02) continue;
       const field = lay.fields.find((f) => x >= Math.min(f.x0, f.x1) && x <= Math.max(f.x0, f.x1) && z >= f.z0 && z <= f.z1);
       if (field && !field.crop) continue;
       // Height: short in the play area, tall at the edges and in meadow patches; ripe wheat in crop fields.

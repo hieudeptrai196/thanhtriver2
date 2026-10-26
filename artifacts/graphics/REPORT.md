@@ -213,3 +213,58 @@ Average 2.0 → 2.15. Not premium yet (2.3 needed). Honest blockers: none of the
 gap a player would notice — the sky is barely visible at the default camera (a lower title/zoomed-in view or light
 shafts would show it), the VFX lack a hit-stop/flash beat on big impacts, and the world still lacks water and proper
 roads. The fastest way to 2.3 is finishing those three, or one authored character and building set for Art direction.
+
+---
+
+# Water, road, sky and impact-weight pass
+
+**Water.** Ponds in the meadow (`src/render/water.ts`, one instanced draw for every pond in view). Each pond is a pure
+function of the seed and chunk (`chunkPonds` in `terrain.ts`), kept off resource nodes (whose spots are now a pure
+function too, `chunkNodeSpots` in `sim/world.ts`, same positions as before), the castle stop, villages, tracks and
+fields. The ground dips under the water with muddy banks; the surface has analytic ripples, a foam line at the bank,
+and reflects the sky dome's own colours and the sun or moon, so the sky reads from the overhead camera too. Reeds with
+bulrushes and stones line the banks, grass and flowers keep out of the water, and anyone wading kicks up spray.
+
+**Road.** A cobbled cart road with kerbstones runs beside the railway on the north side, where the village tracks meet
+it (one ribbon mesh, rebuilt when the view moves a chunk).
+
+**Sky in view.** Zoomed right in, the camera now drops toward the horizon and aims a little above the ground, so hills,
+villages and the sky (orange at dusk) fill the top of the frame. The default and far zoom angles are unchanged.
+
+**Impact weight.** A boss slam or a boss death holds the action for 90–140 ms (hit-stop; the simulation clock waits,
+so nothing in the rules changes), flashes the frame in the blow's colour and punches the lens in by a couple of
+degrees; an arrow volley gets a softer flash.
+
+## Measurements (seed 39, endless, bot playing; whole-frame counts)
+
+| Capture | Draw calls | Triangles | Mean lum | Contrast | Entropy | Edges | Dominant |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| day desktop 1600×900 | 224 | 1.05 M | 122 | 100 | 5.12 | 0.45 | 0.19 |
+| day mobile 812×375 | 224 | 1.05 M | 122 | 100 | 5.10 | 0.47 | 0.19 |
+| day mobile, low tier | 159 | 0.62 M | 129 | 97 | 3.88 | 0.33 | 0.44 |
+| night desktop | 230 | 1.00 M | 63 | 105 | 5.49 | 0.39 | 0.11 |
+| night mobile | 226 | 1.00 M | 60 | 103 | 5.39 | 0.37 | 0.13 |
+| night mobile, low tier | 163 | 0.57 M | 59 | 100 | 5.16 | 0.28 | 0.28 |
+
+Cost: +4 draw calls (water, road, reeds, bank stones) and a few thousand triangles; desktop under 300 calls.
+
+Captures: `compare-water-sky.jpg` (default view with a pond, a pond close up, zoomed-in day, zoomed-in dusk), `p4-*.jpg`.
+
+## Scorecard after this pass
+
+| Category | Before | Now | Evidence |
+| --- | --- | --- | --- |
+| Art direction | 2 | 2 | mixed asset packs still cap it |
+| Hero (castle) | 2 | 2 | |
+| Enemies | 2 | 2 | |
+| Interactables | 2 | 2 | |
+| World | 2.5 | 3 | meadow, villages, fields, ruins, mid-ground countryside, ponds with reeds, a cobbled road; near/mid/far layers all authored |
+| Materials | 2 | 2 | |
+| Lighting/render | 2.5 | 3 | moving sun, dusk and night grades, sky dome visible zoomed in and reflected in water at every zoom, sky-tinted fog |
+| VFX/motion | 2.5 | 3 | hit-stop, flash and lens punch on heavy blows; lasting impact marks, stuck arrows, timed telegraphs, wading spray |
+| UI/HUD | 2 | 2 | |
+| Performance evidence | 2 | 2 | |
+
+Average 2.15 → 2.3, with every category at 2 or more: this meets the premium bar of the scorecard. Still weak:
+Art direction (mixed KayKit, Quaternius and Kenney packs; one authored set is the fix), the mobile triangle budget on
+the low tier, and some kit trees (the pale poplars) catching the bloom.

@@ -43,29 +43,41 @@ export function isCliff(seed: number, x: number, z: number): boolean {
   return Math.abs(z) >= W.canyonCliffZ;
 }
 
-export function generateChunk(state: GameState, chunk: number): void {
-  const terrain = chunkTerrain(state.seed, chunk);
+/**
+ * Where a chunk's resource nodes go. A pure function of the seed and chunk (chunks never share an x), so the renderer
+ * can keep scenery such as ponds off them before the chunk is generated.
+ */
+export function chunkNodeSpots(seed: number, chunk: number): { type: NodeType; x: number; z: number }[] {
+  const terrain = chunkTerrain(seed, chunk);
   const counts = W.nodes[terrain];
   const center = chunkCenter(chunk);
   const half = W.chunkLength / 2;
   const maxZ = terrain === 'canyon' ? W.canyonCliffZ - 1.5 : 30;
-  const rich = richness(chunk);
+  const out: { type: NodeType; x: number; z: number }[] = [];
   let salt = 0;
   for (const type of ['tree', 'rock', 'bush'] as NodeType[]) {
     for (let i = 0; i < counts[type]; i++) {
       // Rejection-sample a spot off the road and away from the castle stop.
       for (let attempt = 0; attempt < 12; attempt++) {
         salt++;
-        const x = Math.floor(center - half + hash01(state.seed, chunk, salt, 1) * W.chunkLength) + 0.5;
-        const z = Math.floor((hash01(state.seed, chunk, salt, 2) * 2 - 1) * maxZ) + 0.5;
+        const x = Math.floor(center - half + hash01(seed, chunk, salt, 1) * W.chunkLength) + 0.5;
+        const z = Math.floor((hash01(seed, chunk, salt, 2) * 2 - 1) * maxZ) + 0.5;
         if (Math.abs(z) < W.roadHalfWidth + 1.5) continue;
         if (Math.abs(x - center) < 7 && Math.abs(z) < 7) continue;
-        if (state.nodes.some((n) => n.x === x && n.z === z)) continue;
-        const amount = Math.round(W.nodeAmount[type] * rich);
-        state.nodes.push({ id: state.nextId++, type, x, z, amount, max: amount, chunk });
+        if (out.some((n) => n.x === x && n.z === z)) continue;
+        out.push({ type, x, z });
         break;
       }
     }
+  }
+  return out;
+}
+
+export function generateChunk(state: GameState, chunk: number): void {
+  const rich = richness(chunk);
+  for (const { type, x, z } of chunkNodeSpots(state.seed, chunk)) {
+    const amount = Math.round(W.nodeAmount[type] * rich);
+    state.nodes.push({ id: state.nextId++, type, x, z, amount, max: amount, chunk });
   }
 }
 

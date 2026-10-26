@@ -8,7 +8,8 @@ import { Grass } from './grass';
 import { Particles } from './particles';
 import { Sky } from './sky';
 import { Decals, Telegraphs } from './decals';
-import { chunkLayout, Terrain, terrainHeight, trackX } from './terrain';
+import { inPond, Road, Water } from './water';
+import { chunkLayout, chunkPonds, pondInside, pondRadius, smooth, Terrain, terrainHeight, trackX, type Pond } from './terrain';
 import {
   castleGeometry,
   cliffGeometry,
@@ -19,6 +20,7 @@ import {
   haystackGeometry,
   signpostGeometry,
   campfireGeometry,
+  reedGeometry,
   blobGeometry,
   furrowTexture,
   structGeometry,
@@ -55,15 +57,18 @@ const VIGNETTE = {
     uTint: { value: new THREE.Vector3(1, 1, 1) },
     uTintAmt: { value: 0 },
     uSide: { value: 0 },
+    // Impact flash: added light, faded out in a few frames.
+    uFlash: { value: new THREE.Vector3() },
   },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-  fragmentShader: `uniform sampler2D tDiffuse; uniform float uStrength, uSize, uTintAmt, uSide; uniform vec3 uTint; varying vec2 vUv;
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float uStrength, uSize, uTintAmt, uSide; uniform vec3 uTint, uFlash; varying vec2 vUv;
     void main(){
       vec4 c = texture2D(tDiffuse, vUv);
       float side = clamp(0.5 + (vUv.x - 0.5) * uSide * 1.6 + (vUv.y - 0.5) * 0.5, 0.0, 1.0);
       c.rgb = mix(c.rgb, c.rgb * uTint + uTint * 0.03, uTintAmt * (0.35 + 0.65 * side));
       float d = distance(vUv, vec2(0.5));
       c.rgb *= mix(1.0, smoothstep(uSize, uSize - 0.45, d), uStrength);
+      c.rgb += uFlash * (1.0 - d * 0.8);
       gl_FragColor = c;
     }`,
 };
@@ -255,6 +260,16 @@ export class GameRenderer {
   private decals: Decals;
   private tele: Telegraphs;
   private seed = 0;
+  private water: Water;
+  private road: Road;
+  private reeds!: Instanced;
+  private bankStones!: Instanced;
+  private ponds: Pond[] = [];
+  /** Seconds of hit-stop still owed; the game loop holds the simulation while it runs down. */
+  hitStop = 0;
+  private flash = 0;
+  private flashColor = new THREE.Color();
+  private kick = 0;
   // Mid-ground dressing (procedural): haystacks, wayposts and cold campfires; plus what it must keep clear of.
   private hay: Instanced;
   private signs: Instanced;
@@ -360,6 +375,8 @@ export class GameRenderer {
     this.sky = new Sky(this.scene);
     this.decals = new Decals(this.scene);
     this.tele = new Telegraphs(this.scene);
+    this.water = new Water(this.scene, this.sky.uniforms);
+    this.road = new Road(this.scene);
     this.hemi = new THREE.HemisphereLight(0xf0e6d4, 0x5e4c34, 1.6);
     this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xffe4bc, 1.9);
@@ -475,6 +492,8 @@ export class GameRenderer {
     // Building sites: a timber scaffold that grows with progress around the rising structure.
     this.hay = new Instanced(haystackGeometry(), sharedStandard({ vertexColors: true, flat: true, roughness: 0.95 }), 90, this.scene, true);
     this.signs = new Instanced(signpostGeometry(), sharedStandard({ vertexColors: true, flat: true, roughness: 0.9 }), 30, this.scene, false);
+    this.reeds = new Instanced(reedGeometry(), sharedStandard({ vertexColors: true, flat: true, roughness: 0.9 }), 160, this.scene, false);
+    this.bankStones = new Instanced(new THREE.DodecahedronGeometry(0.28, 0).scale(1, 0.55, 1), sharedStandard({ color: 0x8a8274, flat: true, roughness: 0.9 }), 120, this.scene, false);
     this.camps = new Instanced(campfireGeometry(), sharedStandard({ vertexColors: true, flat: true, roughness: 0.95 }), 30, this.scene, false);
     this.blueprint = new Instanced(scaffoldGeometry(), sharedStandard({ vertexColors: true, flat: true, roughness: 0.9 }), 300, this.scene, true);
     this.cliffs = [new Instanced(cliffGeometry(), mat, 600, this.scene)];
@@ -793,6 +812,14 @@ export class GameRenderer {
     this.camSmooth.copy(this.camTarget);
   }
 
+  /** A heavy blow: hold the action for `stop` seconds, flash the frame and punch the lens in a little. */
+  private impact(stop: number, color: number, flash: number, kick: number): void {
+    this.hitStop = Math.max(this.hitStop, stop);
+    if (flash >= this.flash) this.flashColor.setHex(color);
+    this.flash = Math.max(this.flash, flash);
+    this.kick = Math.max(this.kick, kick);
+  }
+
   onEvents(events: GameEvent[]): void {
     for (const e of events) {
       const p = e.pos;
@@ -811,7 +838,10 @@ export class GameRenderer {
           this.fx.push({ kind: 'puff', a: p, t: 0, ttl: 0.45, r: type === 'boss' ? 3 : 0.8, color: 0x403038 });
           this.fxp.death(p.x, p.z, type === 'boss');
           this.decals.add('bones', p.x, p.z, type === 'boss' ? 2.4 : 0.7 + Math.random() * 0.3, 18);
-          if (type === 'boss') this.shake = Math.max(this.shake, 0.6);
+          if (type === 'boss') {
+            this.shake = Math.max(this.shake, 0.6);
+            this.impact(0.14, 0xb8ffd0, 0.28, 2.5);
+          }
           break;
         }
         case 'fx.hit':
@@ -862,10 +892,12 @@ export class GameRenderer {
           }
           this.fx.push({ kind: 'slam', a: p, t: 0, ttl: 0.6, r: BALANCE.abilities.arrowRain.radius!, color: 0xffe08a });
           this.decals.add('pocks', p.x, p.z, BALANCE.abilities.arrowRain.radius! * 0.9, 16);
+          this.impact(0, 0xffe0a0, 0.08, 0.8);
           break;
         case 'fx.slam':
           this.fxp.ring(p.x, p.z, Number(e.params?.r ?? 4));
           this.shake = Math.max(this.shake, 0.45);
+          this.impact(0.09, 0xffb070, 0.2, 2);
           this.decals.add('cracks', p.x, p.z, Number(e.params?.r ?? 4) * 0.8, 24);
           this.decals.add('scorch', p.x, p.z, Number(e.params?.r ?? 4) * 0.5, 24);
           this.fx.push({ kind: 'slam', a: p, t: 0, ttl: 0.5, r: Number(e.params?.r ?? BALANCE.abilities.arrowRain.radius), color: e.key === 'fx.slam' ? 0xff6030 : 0xfff0a0 });
@@ -934,23 +966,42 @@ export class GameRenderer {
     this.sun.color.setHex(n > 0.5 ? 0x7c92ff : 0xffe4bc).lerp(new THREE.Color(0xff9a50), n > 0.5 ? 0 : duskK);
 
     // Camera.
-    if (this.autoPitch) this.pitch = 0.62 + 0.4 * Math.min(1, Math.max(0, (this.camDist - 14) / 56));
+    // Zoomed right in the camera drops toward the horizon and the sky comes into view; from the default distance up it
+    // tilts to the old overhead angles.
+    if (this.autoPitch) this.pitch = this.camDist < 32 ? 0.32 + 0.43 * smooth((this.camDist - 14) / 18) : 0.75 + 0.27 * Math.min(1, (this.camDist - 32) / 38);
     this.camSmooth.lerp(this.camTarget, Math.min(1, dt * 10));
     const t = this.camSmooth;
     this.camera.position.set(t.x, Math.sin(this.pitch) * this.camDist, t.z + Math.cos(this.pitch) * this.camDist);
-    this.camera.lookAt(t.x, 0, t.z);
+    // Close in, aim a little above the ground so the horizon and sky sit in the top of the frame.
+    this.camera.lookAt(t.x, 2.4 * (1 - smooth((this.camDist - 14) / 14)), t.z);
     // Impact shake: decays fast, never moves the aim far.
     if (this.shake > 0.001) {
       this.camera.position.x += (Math.random() - 0.5) * this.shake;
       this.camera.position.y += (Math.random() - 0.5) * this.shake * 0.6;
       this.shake *= Math.max(0, 1 - dt * 7);
     }
+    // Lens punch and flash after a heavy blow (real time, so they play through the hit-stop).
+    const rdt = Math.max(dt, 1 / 60);
+    if (this.kick > 0.01 || this.camera.fov !== 45) {
+      this.camera.fov = 45 - this.kick;
+      this.camera.updateProjectionMatrix();
+      this.kick *= Math.max(0, 1 - rdt * 9);
+      if (this.kick <= 0.01) {
+        this.kick = 0;
+        this.camera.fov = 45;
+        this.camera.updateProjectionMatrix();
+      }
+    }
+    this.vignette.uniforms.uFlash.value.set(this.flashColor.r, this.flashColor.g, this.flashColor.b).multiplyScalar(this.flash);
+    this.flash *= Math.max(0, 1 - rdt * 10);
     this.sun.position.set(t.x + this.sunDir.x * 55, Math.max(8, this.sunDir.y * 55), t.z + this.sunDir.z * 55);
     this.sky.mesh.position.copy(this.camera.position);
     this.sun.target.position.set(t.x, 0, t.z);
     this.railway.position.x = Math.round(t.x);
 
     this.updateGround(s.seed, t.x);
+    this.water.update(this.ponds, this.time, Math.max(0, n - 0.5) * 2);
+    this.splashes(s, dt);
     this.grass.update(s.seed, t.x, this.time, !this.renderer.shadowMap.enabled, s.nodes);
 
     // Castle.
@@ -1197,6 +1248,11 @@ export class GameRenderer {
     this.hay.begin();
     this.signs.begin();
     this.camps.begin();
+    this.reeds.begin();
+    this.bankStones.begin();
+    this.ponds = [];
+    for (let i = 0; i < 7; i++) this.ponds.push(...chunkPonds(seed, first + i));
+    this.road.update(seed, chunkCenter(first) - L / 2, chunkCenter(first + 6) + L / 2);
     for (let i = 0; i < 7; i++) {
       const chunk = first + i;
       const terrain = chunkTerrain(seed, chunk);
@@ -1222,6 +1278,8 @@ export class GameRenderer {
     this.hay.end();
     this.signs.end();
     this.camps.end();
+    this.reeds.end();
+    this.bankStones.end();
     this.placeDecor(seed, first);
   }
 
@@ -1251,6 +1309,7 @@ export class GameRenderer {
         const z = (h(1) * 2 - 1) * maxZ;
         if (Math.abs(z) < 3.8) continue; // keep the railway bed clean
         const x = x0 + h(2) * L;
+        if (pondInside(seed, x, z) > 0.02) continue;
         let r = h(3) * total;
         let name: DecorName = 'pebble';
         for (const [n, w] of pick) {
@@ -1452,6 +1511,16 @@ export class GameRenderer {
     }
   }
 
+  /** Anyone wading through a pond kicks up spray now and then. */
+  private splashes(s: GameState, dt: number): void {
+    if (!this.ponds.length || dt <= 0) return;
+    const wade = (x: number, z: number, big: boolean) => {
+      for (const p of this.ponds) if (inPond(p, x, z) && Math.random() < dt * 4) this.fxp.splash(x, z, big);
+    };
+    for (const u of s.units) if (!u.inside) wade(u.x, u.z, false);
+    for (const m of s.monsters) wade(m.x, m.z, m.type === 'boss');
+  }
+
   /**
    * Working countryside in the band between the line and the villages (|z| 9..27): haystacks by a cart, wayposts,
    * fence runs, supply piles, cold campfires. Kept low so it never hides a fight, and clear of resource nodes, the
@@ -1466,11 +1535,32 @@ export class GameRenderer {
     const proc = (inst: Instanced, x: number, z: number, rot: number, sc = 1) => inst.add(x, terrainHeight(seed, x, z) - 0.04, z, rot, sc, sc, sc);
     const clear = (x: number, z: number, r: number) => {
       if (Math.abs(z) < 9) return false;
+      if (pondInside(seed, x, z) > 0 || pondInside(seed, x + r, z) > 0 || pondInside(seed, x - r, z) > 0) return false;
       if (v && z < 0 && Math.abs(x - trackX(v, z)) < 2.4 + r) return false;
       for (const n of this.dressNodes) if ((n.x - x) ** 2 + (n.z - z) ** 2 < (r + 1.8) ** 2) return false;
       for (const st of this.dressStructs) if ((st.cx + 0.5 - x) ** 2 + (st.cz + 0.5 - z) ** 2 < (r + 1.5) ** 2) return false;
       return true;
     };
+    // Reeds and stones round each pond's bank, thicker on the far side.
+    for (const p of chunkPonds(seed, chunk)) {
+      const n = Math.round(p.r * 3.2);
+      for (let i = 0; i < n; i++) {
+        const h = (salt: number) => hash01(seed, chunk, 90 + i, salt + Math.round(p.x));
+        const a = (i / n) * Math.PI * 2 + (h(1) - 0.5) * 0.5;
+        const far = Math.sin(a) < 0 ? 1 : 0.5;
+        if (h(2) > 0.35 + far * 0.55) continue;
+        const rr = pondRadius(p, a) * (0.9 + h(3) * 0.16);
+        const x = p.x + Math.cos(a) * rr;
+        const z = p.z + Math.sin(a) * rr;
+        const sc = 0.8 + h(4) * 0.5;
+        this.reeds.add(x, terrainHeight(seed, x, z) - 0.05, z, h(5) * 6, sc, sc * (0.85 + h(6) * 0.4), sc);
+        if (h(7) < 0.35) {
+          const sx = p.x + Math.cos(a + 0.2) * rr * 1.08;
+          const sz = p.z + Math.sin(a + 0.2) * rr * 1.08;
+          this.bankStones.add(sx, terrainHeight(seed, sx, sz), sz, h(8) * 6, 0.7 + h(9) * 0.7);
+        }
+      }
+    }
     const count = terrain === 'canyon' ? 3 : 8;
     for (let k = 0; k < count; k++) {
       const h = (salt: number) => hash01(seed, chunk, 40 + k, salt);
@@ -1569,6 +1659,9 @@ export class GameRenderer {
     const side = h(11) < 0.5 ? -1 : 1;
     const wx = x0 + 6 + h(12) * (L - 12);
     const wz = side * (16 + h(13) * 10);
+    // Old relics never sit in a pond.
+    const wet = chunkPonds(seed, chunk).some((p) => Math.hypot(p.x - wx, p.z - wz) < p.r * 1.3 + 4.5);
+    if (wet) return;
     if (r < 0.35) {
       const wreck: MedName[] = ['ruinTrebuchet', 'ruinRam', 'ruinTower'];
       put(wreck[Math.floor(h(14) * wreck.length)], wx, wz, h(15) * 6, side < 0 ? 1 : 0.8);

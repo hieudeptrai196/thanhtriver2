@@ -118,7 +118,10 @@ class Game implements GameCtl {
         this.autoDawn = 0;
       }
     }
-    if (!this.paused && !this.hud.modalOpen) {
+    // Hit-stop: a heavy blow holds the action for a few frames (the renderer asks for it, the clock obeys).
+    const held = renderer.hitStop > 0;
+    if (held) renderer.hitStop = Math.max(0, renderer.hitStop - dt);
+    if (!held && !this.paused && !this.hud.modalOpen) {
       const speed = debugSpeed * this.speed;
       this.acc += dt * speed;
       const maxSteps = 8 * speed;
@@ -152,7 +155,7 @@ class Game implements GameCtl {
     this.input.update(dt);
     const ov = this.input.overlay();
     const m = this.mode;
-    renderer.render(sim, dt, {
+    renderer.render(sim, held ? dt * 0.08 : dt, {
       ghost: m.kind === 'build' && ov.ghostPos ? { type: m.type, pos: ov.ghostPos, valid: sim.canBuildAt(m.type, ov.ghostPos) } : null,
       skillTarget: m.kind === 'skill' && ov.ghostPos ? { pos: ov.ghostPos, radius: ov.radius } : null,
     });

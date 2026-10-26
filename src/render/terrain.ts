@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { BALANCE, type TerrainType } from '../data/balance';
 import { hash01 } from '../sim/rng';
-import { chunkCenter, chunkTerrain } from '../sim/world';
+import { chunkCenter, chunkNodeSpots, chunkTerrain } from '../sim/world';
 
 // Continuous low-poly ground built in code: one mesh per chunk, vertex-coloured, flat in the play area
 // and rising into hills (or canyon walls) towards the edges. Heights and colours are pure functions of
@@ -63,8 +63,80 @@ export function terrainHeight(seed: number, x: number, z: number): number {
   const walls = smooth((az - cliffZ) / 5) * (5 + noise(seed, x, z, 6) * 4);
   // The camera looks from the south, so the southern rise stays lower and never hides the camp.
   const south = z > 0 ? 0.45 : 1;
-  return (hills * (1 - cw) + Math.max(hills, walls) * cw) * south;
+  return (hills * (1 - cw) + Math.max(hills, walls) * cw) * south - pondInside(seed, x, z) * POND_DEPTH;
 }
+
+// ------------------------------------------------------------------ ponds and the cart road
+
+/** A pond in the meadow: irregular outline around (x, z) with mean radius r; `phase` shapes the outline. */
+export interface Pond {
+  x: number;
+  z: number;
+  r: number;
+  phase: number;
+}
+
+const POND_DEPTH = 0.5;
+const ponds = new Map<string, Pond[]>();
+
+/** Outline radius of a pond at angle a (shared with the water shader). */
+export function pondRadius(p: Pond, a: number): number {
+  return p.r * (1 + 0.16 * Math.sin(3 * a + p.phase) + 0.09 * Math.sin(5 * a + p.phase * 2.1));
+}
+
+/**
+ * Ponds of a chunk: pure function of the seed, kept off resource nodes, the castle stop, villages, tracks and
+ * fields, and inside the band the default camera sees.
+ */
+export function chunkPonds(seed: number, chunk: number): Pond[] {
+  const key = `${seed}:${chunk}`;
+  const hit = ponds.get(key);
+  if (hit) return hit;
+  if (ponds.size > 64) ponds.clear();
+  const out: Pond[] = [];
+  if (chunkTerrain(seed, chunk) !== 'canyon') {
+    const nodes = chunkNodeSpots(seed, chunk);
+    const lay = chunkLayout(seed, chunk);
+    const x0 = chunkCenter(chunk) - L / 2;
+    const want = hash01(seed, chunk, 3, 301) < 0.85 ? 1 : 0;
+    for (let k = 0; k < 40 && out.length < want; k++) {
+      const h = (salt: number) => hash01(seed, chunk, k, salt + 310);
+      const r = 2.4 + h(1) * 1.6;
+      const x = x0 + 4 + r + h(2) * (L - 8 - 2 * r);
+      const z = (h(3) < 0.5 ? -1 : 1) * (9 + r + h(4) * (14 - r));
+      if (Math.abs(x - chunkCenter(chunk)) < 10 + r) continue;
+      if (nodes.some((n) => (n.x - x) ** 2 + (n.z - z) ** 2 < (r * 1.15 + 0.9) ** 2)) continue;
+      const v = lay.village;
+      if (v && z < 0 && (Math.abs(x - trackX(v, z)) < r * 1.2 + 2 || Math.hypot(x - v.x, z - v.z) < r + 9)) continue;
+      if (lay.fields.some((f) => x + r * 1.3 > Math.min(f.x0, f.x1) - 1 && x - r * 1.3 < Math.max(f.x0, f.x1) + 1 && z + r * 1.3 > f.z0 - 1 && z - r * 1.3 < f.z1 + 1)) continue;
+      out.push({ x, z, r, phase: h(5) * 6.28 });
+    }
+  }
+  ponds.set(key, out);
+  return out;
+}
+
+/** 1 deep inside a pond, easing to 0 at the bank (and a little beyond, for the muddy edge). */
+export function pondInside(seed: number, x: number, z: number): number {
+  const c = Math.round(x / L);
+  let best = 0;
+  for (let k = c - 1; k <= c + 1; k++) {
+    for (const p of chunkPonds(seed, k)) {
+      const dx = x - p.x;
+      const dz = z - p.z;
+      if (Math.abs(dx) > p.r * 1.6 || Math.abs(dz) > p.r * 1.6) continue;
+      const d = Math.hypot(dx, dz) / pondRadius(p, Math.atan2(dz, dx));
+      best = Math.max(best, smooth((1.12 - d) / 0.45));
+    }
+  }
+  return best;
+}
+
+/** The cart road between the railway and the lanterns, on the north side: centre z at x. */
+export function roadZ(x: number): number {
+  return -2.95 + Math.sin(x * 0.07) * 0.18 + Math.sin(x * 0.19) * 0.06;
+}
+export const ROAD_HALF = 0.68;
 
 /** Countryside of one chunk, shared by the ground colours and the scenery models so they line up. */
 export interface ChunkLayout {
@@ -121,6 +193,7 @@ const C = {
   ridge: new THREE.Color(0x7a6442),
   wheat: new THREE.Color(0xb39a4c),
   wheatDark: new THREE.Color(0x96803e),
+  mud: new THREE.Color(0x4f4230),
 };
 
 /** Ploughed strips, ripe wheat and dirt tracks from the nearby villages. */
@@ -163,6 +236,9 @@ function colorAt(seed: number, cw: number, x: number, z: number, h: number, out:
   const patch = smooth((noise(seed, x, z + 50, 7) - 0.62) * 6);
   out.lerp(C.dirt, Math.max(patch * 0.7, smooth((RAIL_Z + 1.5 - Math.abs(z)) / 2) * 0.8));
   if (cw < 1) farmland(seed, x, z, out);
+  // Wet, dark banks round the ponds.
+  const wet = cw < 1 ? pondInside(seed, x, z) : 0;
+  if (wet > 0) out.lerp(C.mud, Math.min(1, wet * 1.6) * 0.85);
   // Higher ground gets drier.
   out.lerp(C.hilltop, smooth(h / 9) * 0.5);
   if (cw > 0) {

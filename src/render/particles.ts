@@ -214,6 +214,13 @@ export class Particles {
     }
   }
 
+  /** Wading through a pond: a spray of droplets and a widening ripple of foam. */
+  splash(x: number, z: number, big = false): void {
+    const k = big ? 2 : 1;
+    this.burst(this.glow, 5 * k, x, -0.05, z, 1.1 * k, 2.6, { life: 0.45, size: 0.09, grow: -0.05, color: 0x9ab8c0, gravity: 12, drag: 0.8, alpha: 0.6 }, 0.25);
+    this.soft.add({ x, y: -0.04, z, vx: 0, vy: 0, vz: 0, life: 0.7, size: 0.3 * k, grow: 1.2 * k, color: 0xd8e4e0, alpha: 0.35, drag: 0 });
+  }
+
   /** Something was finished: a little dust and golden glints. */
   built(x: number, z: number): void {
     this.burst(this.soft, 8, x, 0.3, z, 2, 0.6, { life: 0.8, size: 0.5, grow: 0.8, color: 0xb8a078, alpha: 0.5 }, 0.8);
